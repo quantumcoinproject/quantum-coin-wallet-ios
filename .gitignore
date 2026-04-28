@@ -1,0 +1,106 @@
+# =============================================================================
+# Quantum Coin Wallet iOS - .gitignore
+#
+# This is an XcodeGen-driven project: the .xcodeproj is generated from
+# project.yml on every macOS clone (see README.md "Build" section). The
+# generated project, derived data, and user-specific Xcode state are all
+# excluded from version control.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Generated Xcode project (regenerate with `xcodegen generate`)
+# -----------------------------------------------------------------------------
+*.xcodeproj/
+*.xcworkspace/
+scripts/
+# -----------------------------------------------------------------------------
+# Xcode user / build artifacts
+# -----------------------------------------------------------------------------
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Xcode local history & playgrounds
+.swiftpm/
+timeline.xctimeline
+playground.xcworkspace
+
+# -----------------------------------------------------------------------------
+# Swift Package Manager
+# -----------------------------------------------------------------------------
+.build/
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj.xcworkspace/xcshareddata/swiftpm/
+
+# -----------------------------------------------------------------------------
+# CocoaPods (in case it's added later)
+# -----------------------------------------------------------------------------
+Pods/
+*.xcworkspace
+!default.xcworkspace
+
+# -----------------------------------------------------------------------------
+# Carthage (in case it's added later)
+# -----------------------------------------------------------------------------
+Carthage/Build/
+Carthage/Checkouts/
+
+# -----------------------------------------------------------------------------
+# fastlane
+# -----------------------------------------------------------------------------
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# -----------------------------------------------------------------------------
+# Code signing / secrets - never commit these
+# -----------------------------------------------------------------------------
+*.mobileprovision
+*.provisionprofile
+*.p12
+*.p8
+*.pem
+*.cer
+*.certSigningRequest
+
+# -----------------------------------------------------------------------------
+# OS / editor cruft
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
+# Test / coverage output
+# -----------------------------------------------------------------------------
+*.xcresult/
+coverage/
+*.gcda
+*.gcno
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+*.log
