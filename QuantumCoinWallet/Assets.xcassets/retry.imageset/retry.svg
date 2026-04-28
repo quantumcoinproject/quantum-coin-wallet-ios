@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Clean refresh / retry glyph extracted from
+  app/src/main/res/drawable-v24/retry.xml in the Android sibling project.
+  The Android source ships with ~200 additional decorative paths whose
+  alpha is ~1-5%, baked-in artefacts from the original vector trace. When
+  the source PDF was rendered with `.alwaysTemplate`, iOS picked up the
+  combined alpha mask, producing a faint gray "fog" inside the icon's
+  bounding box. This SVG keeps only the main filled path so the
+  template-rendered glyph is fully transparent outside the silhouette.
+-->
+<!--
+  viewBox is tightened from the Android-source `0 0 512 512` to wrap
+  the actual path bounds (x: 128-384, y: 128-400) with a small 8-unit
+  visual margin on each side. Without this, the icon path occupied
+  only ~50% of the viewBox and `scaleAspectFit` rendered it at half
+  the size of `copy_outline` / `address_explore`, whose source PDFs
+  use a tight viewBox.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="120 120 272 288">
+  <path fill="black" d="M144.5 128L288 128.5L223.5 261L194 211L187 216.5Q176.4 228.9 171 246.5L168 259.5L168 284.5Q174.4 319.1 196.5 338Q211.3 351.7 233.5 358L243.5 360L268.5 360Q301.4 353.9 320 333.5Q334.3 319.3 341 297.5L344 284.5L344 259.5Q341.5 245 336 233.5L319 208.5L346.5 182Q365.6 199.9 376 226.5L383 253.5L384 281.5L379 308.5L368 334.5Q355.9 355.9 337.5 371Q318.8 386.8 292.5 395L266.5 400L245.5 400L244.5 399L236.5 399L226.5 397L207.5 391Q179.8 379.2 161 358.5Q146.2 342.3 137 320.5L129 291.5L128 261.5L133 235.5L143 211.5Q154.8 190.3 172 174.5L144.5 128Z" />
+</svg>

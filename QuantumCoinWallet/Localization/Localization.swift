@@ -1,0 +1,230 @@
+//
+// Localization.swift
+//
+// Port of `JsonInteract.java` + `JsonViewModel.java`. Reads the bundled
+// `en_us.json` and exposes getters with identical method names so call
+// sites ported from Android compile unchanged.
+//
+// Android reference:
+//   app/src/main/java/com/quantumcoinwallet/app/interact/JsonInteract.java
+//   app/src/main/java/com/quantumcoinwallet/app/viewmodel/JsonViewModel.java
+//
+// Note: en_us.json contains deliberate typo keys (e.g.
+// `set-wallet-passowrd`). Do NOT "fix" them here - do the lookup by the
+// exact key string, matching the Android field name.
+//
+
+import Foundation
+
+public final class Localization {
+
+    // MARK: - Shared instance
+
+    public static let shared: Localization = {
+        guard let url = Bundle.main.url(forResource: "en_us", withExtension: "json") else {
+            assertionFailure("en_us.json missing from bundle")
+            return Localization(root: [:])
+        }
+        do {
+            let data = try Data(contentsOf: url)
+            let obj = (try JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            return Localization(root: obj)
+        } catch {
+            assertionFailure("failed to parse en_us.json: \(error)")
+            return Localization(root: [:])
+        }
+    }()
+
+    // MARK: - Storage
+
+    private let root: [String: Any]
+    private let lang: [String: Any]
+    private let errs: [String: Any]
+
+    private init(root: [String: Any]) {
+        self.root = root
+        self.lang = (root["langValues"] as? [String: Any]) ?? [:]
+        self.errs = (root["errors"] as? [String: Any]) ?? [:]
+    }
+
+    // MARK: - Helpers
+
+    private func langString(_ key: String) -> String {
+        (lang[key] as? String) ?? ""
+    }
+
+    private func errString(_ key: String) -> String {
+        (errs[key] as? String) ?? ""
+    }
+
+    // MARK: - Info / quiz
+
+    public func getInfoStep() -> String { (root["infoStep"] as? String) ?? "" }
+    public func getInfoList() -> [[String: String]] {
+        guard let arr = root["info"] as? [[String: Any]] else { return [] }
+        return arr.map { step in
+            var out: [String: String] = [:]
+            for (k, v) in step { if let s = v as? String { out[k] = s } }
+            return out
+        }
+    }
+    public func getQuizStep() -> String { (root["quizStep"] as? String) ?? "" }
+    public func getQuizWrongAnswer() -> String { (root["quizWrongAnswer"] as? String) ?? "" }
+    public func getQuizNoChoice() -> String { (root["quizNoChoice"] as? String) ?? "" }
+    public func getQuiz() -> [[String: Any]] { (root["quiz"] as? [[String: Any]]) ?? [] }
+
+    // MARK: - langValues getters (alphabetical, parity with JsonInteract.java)
+
+    public func getTitleByLangValues()                 -> String { langString("title") }
+    public func getNextByLangValues()                  -> String { langString("next") }
+    public func getOkByLangValues()                    -> String { langString("ok") }
+    public func getCancelByLangValues()                -> String { langString("cancel") }
+    public func getCloseByLangValues()                 -> String { langString("close") }
+    public func getSendByLangValues()                  -> String { langString("send") }
+    public func getReceiveByLangValues()               -> String { langString("receive") }
+    public func getTransactionsByLangValues()          -> String { langString("transactions") }
+    public func getCopyByLangValues()                  -> String { langString("copy") }
+    public func getBalanceByLangValues()               -> String { langString("balance") }
+    public func getCompletedTransactionsByLangValues() -> String { langString("completed-transactions") }
+    public func getPendingTransactionsByLangValues()   -> String { langString("pending-transactions") }
+    public func getWalletsByLangValues()               -> String { langString("wallets") }
+    public func getSettingsByLangValues()              -> String { langString("settings") }
+    public func getUnlockByLangValues()                -> String { langString("unlock") }
+    public func getUnlockWalletByLangValues()          -> String { langString("unlock-wallet") }
+    public func getSelectNetworkByLangValues()         -> String { langString("select-network") }
+    public func getEnterAPasswordByLangValues()        -> String { langString("enter-a-password") }
+    public func getPasswordByLangValues()              -> String { langString("password") }
+    /// Typo preserved - the JSON entry is `set-wallet-passowrd`.
+    public func getSetWalletPasswordByLangValues()     -> String { langString("set-wallet-passowrd") }
+    public func getUseStrongPasswordByLangValues()     -> String { langString("use-strong-password") }
+    public func getRetypePasswordByLangValues()        -> String { langString("retype-password") }
+    public func getRetypeThePasswordByLangValues()     -> String { langString("retype-the-password") }
+    public func getCreateRestoreWalletByLangValues()   -> String { langString("create-restore-wallet") }
+    public func getSelectAnOptionByLangValues()        -> String { langString("select-an-option") }
+    public func getCreateNewWalletByLangValues()       -> String { langString("create-new-wallet") }
+    public func getRestoreWalletFromSeedByLangValues() -> String { langString("restore-wallet-from-seed") }
+    public func getSeedWordsByLangValues()             -> String { langString("seed-words") }
+    public func getSeedWordsInfo1ByLangValues()        -> String { langString("seed-words-info-1") }
+    public func getSeedWordsInfo2ByLangValues()        -> String { langString("seed-words-info-2") }
+    public func getSeedWordsInfo3ByLangValues()        -> String { langString("seed-words-info-3") }
+    public func getSeedWordsInfo4ByLangValues()        -> String { langString("seed-words-info-4") }
+    public func getSeedWordsShowByLangValues()         -> String { langString("seed-words-show") }
+    public func getVerifySeedWordsByLangValues()       -> String { langString("verify-seed-words") }
+    public func getWaitWalletSaveByLangValues()        -> String { langString("waitWalletSave") }
+    public func getWaitWalletOpenByLangValues()        -> String { langString("waitWalletOpen") }
+    public func getWaitUnlockByLangValues()            -> String { langString("waitUnlock") }
+    public func getDpscanByLangValues()                -> String { langString("dpscan") }
+    public func getAddressByLangValues()               -> String { langString("address") }
+    public func getCoinsByLangValues()                 -> String { langString("coins") }
+    public func getRevealSeedByLangValues()            -> String { langString("reveal-seed") }
+    public func getNetworksByLangValues()              -> String { langString("networks") }
+    public func getIdByLangValues()                    -> String { langString("id") }
+    public func getNameByLangValues()                  -> String { langString("name") }
+    public func getScanApiUrlByLangValues()            -> String { langString("scan-api-url") }
+    public func getRpcEndpointByLangValues()           -> String { langString("rpc-endpoint") }
+    public func getBlockExplorerUrlByLangValues()      -> String { langString("block-explorer-url") }
+    public func getAddNetworkByLangValues()            -> String { langString("add-network") }
+    public func getNoActiveNetworkByLangValues()       -> String { langString("no-active-network") }
+    public func getHelpByLangValues()                  -> String { langString("help") }
+    public func getBlockExplorerTitleByLangValues()    -> String { langString("block-explorer-title") }
+    public func getAddByLangValues()                   -> String { langString("add") }
+    public func getEnterNetworkJsonByLangValues()      -> String { langString("enter-network-json") }
+    public func getNetworkByLangValues()               -> String { langString("network") }
+    public func getEnterQuantumWalletPasswordByLangValues() -> String { langString("enter-quantum-wallet-password") }
+    public func getAddressToSendByLangValues()         -> String { langString("address-to-send") }
+    public func getQuantityToSendByLangValues()        -> String { langString("quantity-to-send") }
+    public func getReceiveCoinsByLangValues()          -> String { langString("receive-coins") }
+    public func getSendOnlyByLangValues()              -> String { langString("send-only") }
+    public func getInOutByLangValues()                 -> String { langString("inout") }
+    public func getNoMoreTransactionsByLangValues()    -> String { langString("no-more-transactions") }
+    public func getFromByLangValues()                  -> String { langString("from") }
+    public func getToByLangValues()                    -> String { langString("to") }
+    public func getHashByLangValues()                  -> String { langString("hash") }
+    public func getSelectWalletTypeByLangValues()      -> String { langString("select-wallet-type") }
+    public func getWalletTypeDefaultByLangValues()     -> String { langString("wallet-type-default") }
+    public func getWalletTypeAdvancedByLangValues()    -> String { langString("wallet-type-advanced") }
+    public func getSelectSeedWordLengthByLangValues()  -> String { langString("select-seed-word-length") }
+    public func getSeedLength32ByLangValues()          -> String { langString("seed-length-32") }
+    public func getSeedLength36ByLangValues()          -> String { langString("seed-length-36") }
+    public func getSeedLength48ByLangValues()          -> String { langString("seed-length-48") }
+    public func getCopiedByLangValues()                -> String { langString("copied") }
+    public func getSkipByLangValues()                  -> String { langString("skip") }
+    public func getSkipVerifyConfirmByLangValues()     -> String { langString("skip-verify-confirm") }
+    public func getYesByLangValues()                   -> String { langString("yes") }
+    public func getNoByLangValues()                    -> String { langString("no") }
+    public func getErrorOccurredByLangValues()         -> String { langString("errorOccurred") }
+    public func getErrorTitleByLangValues()            -> String { langString("errorTitle") }
+    public func getSigningByLangValues()               -> String { langString("signing") }
+    public func getAdvancedSigningOptionByLangValues() -> String { langString("advanced-signing-option") }
+    public func getAdvancedSigningDescriptionByLangValues() -> String { langString("advanced-signing-description") }
+    public func getEnabledByLangValues()               -> String { langString("enabled") }
+    public func getDisabledByLangValues()              -> String { langString("disabled") }
+    public func getBackupByLangValues()                -> String { langString("backup") }
+    public func getBackupPromptByLangValues()          -> String { langString("backup-prompt") }
+    public func getBackupDescriptionByLangValues()     -> String { langString("backup-description") }
+    public func getPhoneBackupByLangValues()           -> String { langString("phone-backup") }
+    public func getBackupSavedByLangValues()           -> String { langString("backup-saved") }
+    public func getBackupFailedByLangValues()          -> String { langString("backup-failed") }
+    public func getBackupPasswordByLangValues()        -> String { langString("backup-password") }
+    public func getConfirmBackupPasswordByLangValues() -> String { langString("confirm-backup-password") }
+    public func getRestoreFromCloudByLangValues()      -> String { langString("restore-from-cloud") }
+    public func getRestoreFromFileByLangValues()       -> String { langString("restore-from-file") }
+    public func getRestoreDecryptFailedByLangValues()  -> String { langString("restore-decrypt-failed") }
+    public func getRestoreEnterDifferentPasswordByLangValues() -> String { langString("restore-enter-different-password") }
+    public func getRestoreNoBackupsFoundByLangValues() -> String { langString("restore-no-backups-found") }
+    public func getRestorePasswordPromptRemainingByLangValues() -> String { langString("restore-password-prompt-remaining") }
+    public func getRestoreSummaryStatusColumnByLangValues() -> String { langString("restore-summary-status-column") }
+    public func getRestoreSummaryAddressColumnByLangValues() -> String { langString("restore-summary-address-column") }
+    public func getRestoreSummaryStatusRestoredByLangValues() -> String { langString("restore-summary-status-restored") }
+    public func getRestoreSummaryStatusSkippedByLangValues() -> String { langString("restore-summary-status-skipped") }
+    public func getRestoreSummaryStatusAlreadyExistsByLangValues() -> String { langString("restore-summary-status-already-exists") }
+    public func getRestoreTryDifferentPasswordByLangValues() -> String { langString("restore-try-different-password") }
+    public func getRestoreProgressOfByLangValues()     -> String { langString("restore-progress-of") }
+    public func getRestorePartialProgressByLangValues() -> String { langString("restore-partial-progress") }
+    public func getCameraPermissionDeniedByLangValues() -> String { langString("camera-permission-denied") }
+    public func getBackupToCloudByLangValues()         -> String { langString("backup-to-cloud") }
+    public func getCloudBackupInfoByLangValues()       -> String { langString("cloud-backup-info") }
+    public func getBackupToFileByLangValues()          -> String { langString("backup-to-file") }
+    public func getBackupDoneByLangValues()            -> String { langString("backup-done") }
+    public func getBackupSavedShortByLangValues()      -> String { langString("backup-saved-short") }
+    public func getBackupOptionsTitleByLangValues()    -> String { langString("backup-options-title") }
+    public func getBackupOptionsDescriptionByLangValues() -> String { langString("backup-options-description") }
+    public func getEnterBackupPasswordTitleByLangValues() -> String { langString("enter-backup-password-title") }
+    public func getWalletAlreadyExistsDetailedByLangValues() -> String { langString("wallet-already-exists-detailed") }
+    public func getNoTransactionsByLangValues()        -> String { langString("no-transactions") }
+    public func getTokensByLangValues()                -> String { langString("tokens") }
+    public func getNoTokensByLangValues()              -> String { langString("no-tokens") }
+    public func getContractByLangValues()              -> String { langString("contract") }
+    public func getSymbolByLangValues()                -> String { langString("symbol") }
+    public func getAssetToSendByLangValues()           -> String { langString("asset-to-send") }
+    public func getWhatIsBeingSentByLangValues()       -> String { langString("what-is-being-sent") }
+    public func getFromAddressByLangValues()           -> String { langString("from-address") }
+    public func getToAddressByLangValues()             -> String { langString("to-address") }
+    public func getSendQuantityByLangValues()          -> String { langString("send-quantity") }
+    public func getReviewTransactionPromptByLangValues() -> String { langString("review-transaction-prompt") }
+    public func getTypeIAgreeToConfirmPrefixByLangValues() -> String { langString("type-i-agree-to-confirm") }
+    public func getTypeIAgreeToConfirmSuffixByLangValues() -> String { langString("type-i-agree-to-confirm-suffix") }
+    public func getIAgreeLiteralByLangValues()         -> String { langString("i-agree-literal") }
+    public func getMustAgreeToSubmitByLangValues()     -> String { langString("must-agree-to-submit") }
+    public func getDecryptingWalletByLangValues()      -> String { langString("decrypting-wallet") }
+    public func getSubmittingTransactionByLangValues() -> String { langString("submitting-transaction") }
+    public func getTransactionSentByLangValues()       -> String { langString("transaction-sent") }
+    public func getTransactionIdByLangValues()         -> String { langString("transaction-id") }
+    public func getBackByLangValues()                  -> String { langString("back") }
+    public func getConfirmWalletByLangValues()         -> String { langString("confirm-wallet") }
+    public func getConfirmWalletDescriptionByLangValues() -> String { langString("confirm-wallet-description") }
+    public func getEnterSeedWordsByLangValues()        -> String { langString("enter-seed-words") }
+
+    // MARK: - errors getters
+
+    public func getSelectOptionByErrors()              -> String { errString("selectOption") }
+    public func getRetypePasswordMismatchByErrors()    -> String { errString("retypePasswordMismatch") }
+    public func getPasswordSpecByErrors()              -> String { errString("passwordSpec") }
+    public func getPasswordSpaceByErrors()             -> String { errString("passwordSpace") }
+    public func getWalletPasswordMismatchByErrors()    -> String { errString("walletPasswordMismatch") }
+    public func getInvalidNetworkJsonByErrors()        -> String { errString("invalidNetworkJson") }
+    public func getEnterAmountByErrors()               -> String { errString("enterAmount") }
+    public func getQuantumAddrByErrors()               -> String { errString("quantumAddr") }
+    public func getWalletPasswordNotSetByErrors()      -> String { errString("wallet-password-not-set") }
+    public func getEmptyPasswordByErrors()             -> String { errString("emptyPassword") }
+}

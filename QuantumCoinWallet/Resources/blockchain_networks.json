@@ -1,0 +1,9 @@
+[
+  {
+    "name": "MAINNET",
+    "chainId": "123123",
+    "scanApiDomain": "https://app.readrelay.quantumcoinapi.com",
+    "rpcEndpoint": "https://public.rpc.quantumcoinapi.com",
+    "blockExplorerUrl": "https://quantumscan.com"
+  }
+]
