@@ -74,6 +74,15 @@ public final class AccountTransactionsViewController: UIViewController,
     /// or echo the requested index.
     private var lastRequestedPageIndex: Int = -1
 
+    /// In-flight guard mirrors Android `AccountTransactionsFragment`
+    /// lines 387-390 / 480-483 (`if (progressBar visible) { Toast +
+    /// return; }`). Stops a fast tap on prev / next / refresh, or
+    /// the auto-fired tab change, from racing two requests against
+    /// each other; the second tap surfaces a toast instead. Cleared
+    /// in the load Task's defer so success, failure, and
+    /// cancellation all release it.
+    private var isLoading: Bool = false
+
     public override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(named: "colorBackground") ?? .systemBackground
@@ -305,14 +314,37 @@ public final class AccountTransactionsViewController: UIViewController,
     /// Issue a request for `pageIndex`. When called without an
     /// argument, uses the live `pageIndex` (which is -1 on the very
     /// first load and after wallet/network changes).
+    ///
+    /// Re-entrant calls while a request is already in flight are
+    /// rejected with a toast (mirrors Android's
+    /// `transaction_message_exits` short-circuit). This prevents a
+    /// double-tap on next / prev / refresh from queueing a second
+    /// load behind the first.
     private func loadPage(requested: Int? = nil) {
+        if isLoading {
+            Toast.showError(
+                Localization.shared.getTransactionMessageExitsByLangValues())
+            return
+        }
         let addr = currentAddress()
         guard !addr.isEmpty else { return }
         let pageToRequest = requested ?? pageIndex
         lastRequestedPageIndex = pageToRequest
+        isLoading = true
         spinner.startAnimating()
         emptyLabel.isHidden = true
         Task { [pageToRequest, currentTab] in
+            // Defer-style cleanup that always runs on the main actor
+            // so the spinner-stop and isLoading-release stay on the
+            // UI thread regardless of which branch returned. We
+            // can't use `defer` here because the task body is
+            // async and Swift `defer` doesn't await.
+            func releaseGuard() async {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.spinner.stopAnimating()
+                }
+            }
             do {
                 if currentTab == .completed {
                     let r = try await AccountsApi.accountTransactions(
@@ -320,6 +352,7 @@ public final class AccountTransactionsViewController: UIViewController,
                     await MainActor.run {
                         self.handleResponse(items: r.result ?? [],
                                             totalPages: r.totalPages)
+                        self.isLoading = false
                     }
                 } else {
                     let r = try await AccountsApi.accountPendingTransactions(
@@ -327,11 +360,12 @@ public final class AccountTransactionsViewController: UIViewController,
                     await MainActor.run {
                         self.handleResponse(items: r.result ?? [],
                                             totalPages: r.totalPages)
+                        self.isLoading = false
                     }
                 }
             } catch {
+                await releaseGuard()
                 await MainActor.run {
-                    self.spinner.stopAnimating()
                     Toast.showError("\(error)")
                 }
             }
@@ -426,7 +460,10 @@ public final class AccountTransactionsViewController: UIViewController,
             label.text = titles[index]
             label.font = Typography.boldTitle(13)
             label.textColor = UIColor(named: "colorCommon6") ?? .label
-            label.textAlignment = .center
+            // Coins column body is left-aligned so the user can read
+            // the value without an awkward center-justified gap; keep
+            // the header aligned to match.
+            label.textAlignment = (index == 1) ? .left : .center
             label.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(label)
             NSLayoutConstraint.activate([
@@ -462,11 +499,22 @@ public final class AccountTransactionsViewController: UIViewController,
                               outgoing: isPending ? true : outgoing,
                               showFailed: !isPending && showFailed)
             case 1:
-                let value = (txn.value ?? "").isEmpty ? "0" : (txn.value ?? "0")
-                fillTextCell(cell, text: value, font: Typography.body(11))
+                // Mirror Android `AccountTransactionAdapter` which
+                // pipes the hex / decimal `value` through
+                // `CoinUtils.formatWei(new BigInteger(...))` so the
+                // table renders human-readable ether amounts instead
+                // of raw wei integers. `formatWei` accepts both
+                // 0x-prefixed hex and plain decimal strings. Left-
+                // aligned so the digit stack reads naturally next
+                // to the In/Out arrow column.
+                fillTextCell(cell,
+                             text: CoinUtils.formatWei(txn.value),
+                             font: Typography.body(11),
+                             alignment: .left)
             case 2:
-                let dateText = txn.date ?? ""
-                fillTextCell(cell, text: dateText, font: Typography.body(11))
+                fillTextCell(cell,
+                             text: formatDate(txn.date),
+                             font: Typography.body(11))
                 cell.isHidden = isPending
             case 3:
                 fillTextCell(cell, text: shortHex(from), font: Typography.body(12))
@@ -556,11 +604,12 @@ public final class AccountTransactionsViewController: UIViewController,
 
     // MARK: - Cell content helpers
 
-    private func fillTextCell(_ cell: UIView, text: String, font: UIFont) {
+    private func fillTextCell(_ cell: UIView, text: String, font: UIFont,
+                              alignment: NSTextAlignment = .center) {
         let label = UILabel()
         label.text = text
         label.font = font
-        label.textAlignment = .center
+        label.textAlignment = alignment
         label.lineBreakMode = .byTruncatingTail
         label.textColor = UIColor(named: "colorCommon8") ?? .label
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -583,8 +632,8 @@ public final class AccountTransactionsViewController: UIViewController,
         row.spacing = 4
         row.translatesAutoresizingMaskIntoConstraints = false
 
-        let failed = UIImageView(image: UIImage(systemName: "exclamationmark.triangle.fill"))
-        failed.tintColor = .systemOrange
+        let failed = UIImageView(image: UIImage(systemName: "exclamationmark.triangle"))
+        failed.tintColor = UIColor(named: "colorCommon6") ?? .systemOrange
         failed.contentMode = .scaleAspectFit
         failed.translatesAutoresizingMaskIntoConstraints = false
         failed.widthAnchor.constraint(equalToConstant: 22).isActive = true
@@ -593,7 +642,14 @@ public final class AccountTransactionsViewController: UIViewController,
 
         let arrowName = outgoing ? "arrow.up.circle" : "arrow.down.circle"
         let arrow = UIImageView(image: UIImage(systemName: arrowName))
-        arrow.tintColor = UIColor(named: "colorCommon6") ?? .label
+        // Android `arrow_up_circle_outline.xml` strokes #FFA500
+        // (orange) and `arrow_down_circle_outline.xml` strokes
+        // #1DCC70 (green). Tinting the SF Symbols with the same
+        // hex values keeps the in/out semantics visually identical
+        // across platforms.
+        arrow.tintColor = outgoing
+            ? UIColor(red: 1.0,    green: 0.647, blue: 0.0,   alpha: 1.0)
+            : UIColor(red: 0.114,  green: 0.800, blue: 0.439, alpha: 1.0)
         arrow.contentMode = .scaleAspectFit
         arrow.translatesAutoresizingMaskIntoConstraints = false
         arrow.widthAnchor.constraint(equalToConstant: 30).isActive = true
@@ -637,6 +693,48 @@ public final class AccountTransactionsViewController: UIViewController,
     /// Truncate to 7 chars to match Android's `substring(0, 7)`.
     private func shortHex(_ raw: String) -> String {
         raw.count >= 7 ? String(raw.prefix(7)) : raw
+    }
+
+    /// ISO-8601 / RFC-3339 parser for the `createdAt` strings the
+    /// scan API emits. Fractional-second support is on so payloads
+    /// with millisecond precision (`...Z`) round-trip correctly; a
+    /// fallback formatter without the fractional flag handles older
+    /// no-millis responses.
+    private static let inputISOWithFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let inputISOPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    /// Output formatter mirrors Android `AccountTransactionAdapter`'s
+    /// `OffsetDateTime.format(DateTimeFormatter.ofPattern("E, dd MMM
+    /// yyyy HH:mm:ss")) + " GMT"` so the table reads identically on
+    /// both platforms. Locale is pinned to en_US_POSIX (and the time
+    /// zone to GMT) so a user in a French locale doesn't see "Lun. /
+    /// avr." mixed in beside the rest of the English UI.
+    private static let outputDate: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "GMT")
+        f.dateFormat = "E, dd MMM yyyy HH:mm:ss"
+        return f
+    }()
+
+    /// Convert the raw API timestamp to the Android-formatted display
+    /// string. Returns the trimmed source on parse failure (so the
+    /// user still sees something) and "" on empty / nil input.
+    private func formatDate(_ raw: String?) -> String {
+        guard let s = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !s.isEmpty else { return "" }
+        let parsed = Self.inputISOWithFractional.date(from: s)
+            ?? Self.inputISOPlain.date(from: s)
+        guard let date = parsed else { return s }
+        return Self.outputDate.string(from: date) + " GMT"
     }
 }
 

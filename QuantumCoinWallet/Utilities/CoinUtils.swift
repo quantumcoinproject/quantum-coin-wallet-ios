@@ -81,6 +81,78 @@ public enum CoinUtils {
         return sign + result
     }
 
+    /// Convert an ether (decimal) amount to its wei (integer-string)
+    /// representation. Mirrors Android `CoinUtils.parseEther` which
+    /// multiplies the input by `10^18`. Empty / nil / malformed
+    /// input returns "0". Used by the Send pipeline to translate
+    /// the user-typed quantity field into the wei-scaled value the
+    /// JS bridge expects.
+    public static func parseEther(_ etherValue: String?) -> String {
+        return parseUnits(etherValue, decimals: ETHER_DECIMALS)
+    }
+
+    /// Convert a decimal amount to its base-unit (wei-scaled) integer
+    /// string by multiplying by `10^decimals`. Mirrors Android
+    /// `CoinUtils.parseUnits(amount, decimals)`. Truncates fractional
+    /// digits beyond `decimals` (no rounding) to avoid silently
+    /// inflating the user's input. Returns "0" for empty / malformed
+    /// input. Operates on the digit string directly so 18-decimal
+    /// (and higher) precision is exact, matching the inverse
+    /// `formatUnits` strategy.
+    public static func parseUnits(_ value: String?, decimals: Int) -> String {
+        guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return "0"
+        }
+        var sign = ""
+        var work = raw
+        if work.hasPrefix("-") { sign = "-"; work.removeFirst() }
+        else if work.hasPrefix("+") { work.removeFirst() }
+
+        // Accept the locale comma alongside `.` so a user on a
+        // comma-locale device whose decimal pad emits `,` doesn't
+        // silently lose every fractional digit.
+        work = work.replacingOccurrences(of: ",", with: ".")
+
+        let dotCount = work.filter { $0 == "." }.count
+        guard dotCount <= 1 else { return "0" }
+
+        let intPart: String
+        let fracPart: String
+        if let dot = work.firstIndex(of: ".") {
+            intPart = String(work[..<dot])
+            fracPart = String(work[work.index(after: dot)...])
+        } else {
+            intPart = work
+            fracPart = ""
+        }
+
+        let isAsciiDigit: (Character) -> Bool = { $0.isASCII && $0.isNumber }
+        guard intPart.allSatisfy(isAsciiDigit) || intPart.isEmpty,
+              fracPart.allSatisfy(isAsciiDigit) else {
+            return "0"
+        }
+
+        let scale = max(decimals, 0)
+        var combined: String
+        if scale == 0 {
+            combined = intPart.isEmpty ? "0" : intPart
+        } else if fracPart.count >= scale {
+            // Truncate any digits past the supported decimals.
+            let cut = fracPart.index(fracPart.startIndex, offsetBy: scale)
+            combined = (intPart.isEmpty ? "0" : intPart) + fracPart[..<cut]
+        } else {
+            let pad = String(repeating: "0", count: scale - fracPart.count)
+            combined = (intPart.isEmpty ? "0" : intPart) + fracPart + pad
+        }
+
+        // Strip leading zeros so wei is canonical ("100" not "00100").
+        let stripped = combined.drop(while: { $0 == "0" })
+        let canonical = stripped.isEmpty ? "0" : String(stripped)
+        if canonical == "0" { return "0" }
+        return sign + canonical
+    }
+
     /// Convert an unsigned hex-digit string into its decimal-digit
     /// representation. Supports arbitrary length without falling back
     /// to fixed-precision math. Returns nil only on programmer error

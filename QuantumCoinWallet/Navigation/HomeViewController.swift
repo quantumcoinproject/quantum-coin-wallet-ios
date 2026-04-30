@@ -67,15 +67,24 @@ public final class HomeViewController: UIViewController {
     private var containerBottomConstraint: NSLayoutConstraint?
 
     /// Periodic balance poller. Mirrors Android `HomeActivity
-    /// .notificationThread`'s `Thread.sleep(TIME_SLEEP=5000)` loop, but
-    /// driven off `RunLoop.main` instead of a dedicated background
-    /// thread. Balance only -- the token list is event-driven
-    /// (load / wallet change / network change).
+    /// .notificationThread`'s `Thread.sleep` loop, but driven off
+    /// `RunLoop.main` instead of a dedicated background thread.
+    /// Balance only -- the token list is event-driven (load / wallet
+    /// change / network change).
+    ///
+    /// The interval is 10s while the app is foregrounded and slows
+    /// to 300s when backgrounded. iOS will eventually suspend the
+    /// process while it's in the background, but as long as the
+    /// process keeps running (e.g. while the user is in the app
+    /// switcher) the slower cadence keeps it from hammering the
+    /// scan API.
     private var balanceTimer: Timer?
+    private static let foregroundInterval: TimeInterval = 10
+    private static let backgroundInterval: TimeInterval = 300
 
-    /// Re-entrancy guard for automatic balance refreshes so a slow 5s
-    /// poll can't stack repeated requests on top of each other. Manual
-    /// taps bypass the guard.
+    /// Re-entrancy guard for automatic balance refreshes so a slow
+    /// poll can't stack repeated requests on top of each other.
+    /// Manual taps bypass the guard.
     private var balanceLoading = false
 
     public override func viewDidLoad() {
@@ -178,22 +187,57 @@ public final class HomeViewController: UIViewController {
 
         routeInitialScreen()
 
-        // 5-second main-coin-balance poll. Android parity:
-        // `HomeActivity.notificationThread` loops with
-        // `Thread.sleep(TIME_SLEEP)`, where `TIME_SLEEP = 5000ms`.
-        // Scheduled on `.common` mode so scrolling / tracking gestures
-        // don't pause the tick.
-        let timer = Timer.scheduledTimer(
-            withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.refreshBalance(manual: false)
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        balanceTimer = timer
+        // Foreground / background lifecycle observers swap the
+        // balance-poll cadence between 10s (foreground) and 300s
+        // (background) so a backgrounded app doesn't keep pinging
+        // the scan API at full speed while iOS hasn't yet
+        // suspended us. `willEnterForeground` also kicks an
+        // immediate refresh so the user sees fresh data without
+        // waiting up to 10s after a re-entry.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification,
+            object: nil)
+
+        scheduleBalanceTimer(interval: Self.foregroundInterval)
     }
 
     deinit {
         balanceTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
+    }
+
+    /// (Re)create the periodic balance-refresh timer at the supplied
+    /// interval. Always invalidates the previous timer first so a
+    /// foreground/background flip never leaves two timers ticking.
+    /// Scheduled on `.common` mode so active scroll/tracking
+    /// gestures don't pause the tick.
+    private func scheduleBalanceTimer(interval: TimeInterval) {
+        balanceTimer?.invalidate()
+        let t = Timer.scheduledTimer(
+            withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.refreshBalance(manual: false)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        balanceTimer = t
+    }
+
+    @objc private func handleAppDidEnterBackground() {
+        scheduleBalanceTimer(interval: Self.backgroundInterval)
+    }
+
+    @objc private func handleAppWillEnterForeground() {
+        scheduleBalanceTimer(interval: Self.foregroundInterval)
+        // Immediate one-off refresh so the user doesn't stare at a
+        // potentially-stale balance for the first 10s after returning
+        // to the app.
+        refreshBalance(manual: false)
     }
 
     @objc private func handleNetworkConfigDidChange() {
@@ -242,7 +286,7 @@ public final class HomeViewController: UIViewController {
 
     private func routeInitialScreen() {
         if !KeyStore.shared.isUnlocked && hasExistingWallets() {
-            presentUnlockThenRoute()
+            presentUnlockGate()
             return
         }
         if hasExistingWallets() {
@@ -257,7 +301,31 @@ public final class HomeViewController: UIViewController {
         KeyStore.shared.maxWalletIndex() >= 0
     }
 
-    private func presentUnlockThenRoute() {
+    /// Public re-entry from `SessionLock` after the 5-min idle relock
+    /// fires. The metadata snapshot has already been cleared, so the
+    /// in-memory address map is empty and `centerStripView` would
+    /// otherwise be stuck displaying the now-stale address. This
+    /// helper:
+    ///   - Tears down any modal that might have been on top when the
+    ///     user backgrounded the app (a leftover wait dialog, picker,
+    ///     confirmation sheet, ...). UIKit silently rejects a
+    ///     `present(...)` from a presenter that already has its own
+    ///     presented chain, so without the dismiss-first pass the
+    ///     unlock dialog never appears.
+    ///   - Blanks the strip's `currentAddress` so the user sees a
+    ///     cleanly locked state instead of stale data.
+    ///   - Routes to the same cold-launch unlock gate the very first
+    ///     `routeInitialScreen()` uses, so success / wrong-password
+    ///     UX matches the rest of the app.
+    public func relockAndPresentUnlock() {
+        if presentedViewController != nil {
+            dismiss(animated: false)
+        }
+        centerStripView.currentAddress = ""
+        presentUnlockGate()
+    }
+
+    private func presentUnlockGate() {
         let dlg = UnlockDialogViewController()
         // Cold-launch gate: the user has at least one wallet, so they
         // MUST unlock before the wallets list / main strip render.
@@ -536,9 +604,12 @@ public final class HomeViewController: UIViewController {
     /// value in place so the user keeps context.
     ///
     /// `manual = false` is used by the initial main-screen load,
-    /// wallet/network-change observers, and the 5s periodic poll. On
-    /// failure we set the balance label to "-" and hide the token
-    /// table; no overlay/toast/dialog is shown.
+    /// wallet/network-change observers, and the 5s periodic poll.
+    /// Errors here are intentionally silent: any failure (4xx, 5xx,
+    /// 429 rate-limit, decode mismatch, offline, ...) leaves the
+    /// previous balance and token list untouched so a transient blip
+    /// doesn't blank out the dashboard while a typing user wonders if
+    /// their wallet is empty. Only the spinner stops.
     private func refreshBalance(manual: Bool) {
         // Drop overlapping automatic ticks so a slow 5s poll can't
         // stack request after request. Manual taps always proceed so
@@ -558,9 +629,9 @@ public final class HomeViewController: UIViewController {
                 let resp = try await AccountsApi.accountBalance(address: address)
                 await MainActor.run {
                     guard let self = self else { return }
-                    self.centerStripView.setBalance(resp.result?.balance ?? "0")
+                    self.centerStripView.setBalance(
+                        CoinUtils.formatWei(resp.result?.balance))
                     self.centerStripView.setBalance(loading: false)
-                    self.setTokenTableHidden(false)
                     self.balanceLoading = false
                 }
             } catch {
@@ -570,10 +641,10 @@ public final class HomeViewController: UIViewController {
                     self.balanceLoading = false
                     if manual {
                         self.presentBalanceError(error)
-                    } else {
-                        self.centerStripView.setBalance("-")
-                        self.setTokenTableHidden(true)
                     }
+                    // Auto-poll error: intentionally a no-op so the
+                    // last successful balance + token table stay
+                    // visible across transient API hiccups.
                 }
             }
         }
@@ -594,14 +665,6 @@ public final class HomeViewController: UIViewController {
         let dlg = MessageInformationDialogViewController.error(
             title: title, message: body)
         present(dlg, animated: true)
-    }
-
-    /// Toggle the token list visibility while staying on the main
-    /// screen. Used by `refreshBalance(manual:)` to drive the
-    /// auto-error visual state (balance "-" + tokens hidden) and to
-    /// restore the table on the next successful fetch.
-    private func setTokenTableHidden(_ hidden: Bool) {
-        (currentChild as? HomeMainViewController)?.setTableHidden(hidden)
     }
 
     private func refreshNetworkChip() {

@@ -107,69 +107,46 @@ public final class SessionLock {
         // an unlock password it doesn't have.
         guard KeyStore.shared.maxWalletIndex() >= 0 else { return }
         guard !KeyStore.shared.isMetadataLoaded else { return }
-        presentUnlockDialog()
+        // Defer the actual present to the next runloop tick so any
+        // in-flight scene-activation transition (we get here from
+        // `applicationDidBecomeActive`) has finished. UIKit silently
+        // drops modal presentations issued during a transition,
+        // which is the bug that left the user looking at a blank
+        // home strip with no unlock dialog after a >5min background.
+        DispatchQueue.main.async {
+            self.presentUnlockGate()
+        }
     }
 
-    private func presentUnlockDialog() {
+    /// Walk to the app's `HomeViewController` and route through its
+    /// public relock entry. `HomeViewController.relockAndPresentUnlock`
+    /// dismisses any leftover modal, blanks the address strip, and
+    /// presents the same cold-launch unlock dialog the very first
+    /// `routeInitialScreen()` uses - so the wrong-password / wait /
+    /// `showMain()` UX matches the rest of the app exactly.
+    private func presentUnlockGate() {
         guard let scene = UIApplication.shared.connectedScenes
                 .compactMap({ $0 as? UIWindowScene }).first,
               let window = scene.keyWindow ?? scene.windows.first,
-              let root = window.rootViewController else { return }
-        if root.presentedViewController is UnlockDialogViewController { return }
-        let dlg = UnlockDialogViewController()
-        // Re-lock prompts must be non-dismissable. The user landed
-        // here because their session expired; closing the dialog
-        // without unlocking would leave them looking at a partially
-        // populated screen with the in-memory address map cleared.
-        dlg.isMandatory = true
-        dlg.onUnlock = { [weak dlg] pw in
-            guard let dlg = dlg else { return }
-            if pw.isEmpty {
-                // Empty-password message surfaced as the shared
-                // orange OK alert layered on top of the re-lock
-                // dialog. Field stays editable; the password field
-                // is refocused once the alert is dismissed (handled
-                // inside `showOrangeError`).
-                dlg.showOrangeError(Localization.shared.getEmptyPasswordByErrors())
-                return
-            }
-            // `KeyStore.unlock` runs scrypt key-derivation, which can
-            // take a few seconds; surface the standard
-            // "Please wait while..." dialog over the unlock sheet so
-            // the UI is not visibly frozen during idle re-lock.
-            // Mirrors the cold-launch path in
-            // `HomeViewController.presentUnlockThenRoute`.
-            let wait = WaitDialogViewController(
-                message: Localization.shared.getWaitUnlockByLangValues())
-            dlg.present(wait, animated: true)
-            Task.detached(priority: .userInitiated) { [weak dlg, weak wait] in
-                var failure: Error? = nil
-                do {
-                    // KeyStore.unlock(password:) calls markUnlockedNow()
-                    // internally on success, so we don't repeat it here.
-                    try KeyStore.shared.unlock(password: pw)
-                } catch {
-                    failure = error
-                }
-                let err = failure
-                await MainActor.run {
-                    wait?.dismiss(animated: true) {
-                        if err == nil {
-                            dlg?.dismiss(animated: true)
-                        } else {
-                            // Wrong-password branch: orange OK alert
-                            // layered on top of the re-lock dialog.
-                            // Typed password preserved (no
-                            // `clearField()`).
-                            dlg?.showOrangeError(
-                                Localization.shared.getWalletPasswordMismatchByErrors())
-                        }
-                    }
-                }
-            }
+              let home = Self.findHomeViewController(under: window.rootViewController)
+        else { return }
+        // Already in a relock prompt? Nothing to do.
+        if home.presentedViewController is UnlockDialogViewController { return }
+        home.relockAndPresentUnlock()
+    }
+
+    /// Walk the presentation chain looking for the app's
+    /// `HomeViewController`. Returns nil on cold-launch / splash
+    /// states where it isn't the rootVC yet (those screens haven't
+    /// unlocked the vault, so the relock dialog isn't relevant).
+    private static func findHomeViewController(
+        under root: UIViewController?) -> HomeViewController? {
+        var node = root
+        while let cur = node {
+            if let home = cur as? HomeViewController { return home }
+            node = cur.presentedViewController
         }
-        let presenter = root.presentedViewController ?? root
-        presenter.present(dlg, animated: true)
+        return nil
     }
 
     private func installInteractionHook() {

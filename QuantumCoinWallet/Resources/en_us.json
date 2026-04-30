@@ -93,6 +93,7 @@
       "waitWalletSave": "Please wait while your wallet is being saved with strong encryption. This can take upto a minute or so to complete...",
       "waitWalletOpen": "Please wait while your wallet is being decrypted and opened. This can take upto a minute...",
       "waitUnlock": "Please wait while your wallet is being decrypted and unlocked. This can take upto a minute.",
+      "wait-opening-picker": "Please wait, opening picker...",
       "dpscan": "Block Explorer",
       "address": "Address",
       "coins": "Coins",
@@ -180,6 +181,7 @@
       "no-tokens": "No tokens for this address",
       "contract": "Contract",
       "symbol": "Symbol",
+      "decimals": "Decimals",
       "asset-to-send": "Asset to send",
       "what-is-being-sent": "Which item to send?",
       "from-address": "From Address",
@@ -193,7 +195,8 @@
       "decrypting-wallet": "Please wait while decrypting wallet...",
       "submitting-transaction": "Please wait while your transaction is being submitted.",
       "transaction-sent": "Your transaction request has been sent.",
-      "transaction-id": "Transaction ID"
+      "transaction-id": "Transaction ID",
+      "transaction-message-exits": "A transaction request is already in progress."
     },
     "errors": {
       "selectOption": "Please select an option.",
