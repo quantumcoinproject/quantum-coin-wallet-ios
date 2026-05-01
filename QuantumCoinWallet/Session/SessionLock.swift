@@ -43,11 +43,33 @@ public final class SessionLock {
     }
 
     public func applicationDidBecomeActive() {
-        // If the metadata snapshot is already cleared, the cold-launch
-        // gate (or whatever unlock path the user is in) is already
-        // responsible for the prompt - we must not race-present a
-        // second dialog here.
-        guard KeyStore.shared.isMetadataLoaded else { return }
+        if !KeyStore.shared.isMetadataLoaded {
+            // Metadata is cleared. Two cases:
+            //  1. Cold launch / splash: HomeViewController is not the
+            //     rootVC yet, so `presentUnlockGate` -> `findHomeViewController`
+            //     returns nil and this is a safe no-op. The dedicated
+            //     cold-launch gate inside HomeViewController.routeInitialScreen
+            //     remains the path that prompts here.
+            //  2. Past-splash relock: a previous `lockAndPresent`
+            //     ran (idle timer or >5min background resume),
+            //     cleared metadata, but its `present(...)` was
+            //     dropped by UIKit (e.g. raced a stale modal's
+            //     dismiss). Without this re-attempt the user sees
+            //     a blank shell with no unlock dialog until the
+            //     next idle-timer cycle fires after they happen to
+            //     tap. Re-dispatching `presentUnlockGate` here gets
+            //     them prompted on the very next foreground.
+            //
+            // `presentUnlockGate` already short-circuits if the
+            // dialog is mid-flight, so the cold-launch race is also
+            // safe - at worst we no-op a second time.
+            if KeyStore.shared.maxWalletIndex() >= 0 {
+                DispatchQueue.main.async { [weak self] in
+                    self?.presentUnlockGate()
+                }
+            }
+            return
+        }
 
         let now = CFAbsoluteTimeGetCurrent()
         // Use the more conservative of "elapsed since last unlock" or

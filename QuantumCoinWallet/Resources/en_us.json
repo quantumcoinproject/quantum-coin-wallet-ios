@@ -140,7 +140,7 @@
       "errorOccurred": "An error occurred: ",
       "errorTitle": "Error",
       "signing": "Advanced Signing",
-      "advanced-signing-option": "Enable advanced signing",
+      "advanced-signing-option": "Advanced signing",
       "advanced-signing-description": "Applicable wallets will incur 30 times higher gas price if this setting is enabled",
       "enabled": "Enabled",
       "disabled": "Disabled",

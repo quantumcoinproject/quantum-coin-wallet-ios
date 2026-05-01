@@ -38,13 +38,36 @@ public final class UnlockDialogViewController: ModalDialogViewController,
     }
 
     private let titleLabel = UILabel()
-    private let passwordField = PasswordTextField()
+    /// `.existingPassword` is fill-only; iOS will not prompt to
+    /// save what the user types here. The vault credential can
+    /// only be written by the create-wallet flow in
+    /// `HomeWalletViewController` (the sole `.newPassword` site
+    /// for `vaultUsername`).
+    private let passwordField = PasswordTextField(purpose: .existingPassword)
     private let errorLabel = UILabel()
     private let unlockButton = UIButton(type: .system)
     private let closeButton = UIButton(type: .system)
 
     public override func viewDidLoad() {
         super.viewDidLoad()
+
+        // MARK: - Keychain autofill (vault unlock)
+        //
+        // Pairs `.password` (existingPassword) with a hidden
+        // `.username` field carrying
+        // `CredentialIdentifier.vaultUsername`. iOS QuickType will
+        // offer the saved vault password for THIS device only -
+        // per-device username scoping prevents another device's
+        // synced vault password from being autofilled here.
+        //
+        // Save behavior: NONE. `.existingPassword` is fill-only;
+        // iOS will not prompt to save what the user types. The
+        // vault credential can only be written by the create-
+        // wallet flow in HomeWalletViewController (the sole
+        // `.newPassword` site for vaultUsername). User-choice
+        // override: see CredentialIdentifier file header.
+        let usernameField = UsernameField.make(
+            CredentialIdentifier.vaultUsername)
 
         titleLabel.text = Localization.shared.getUnlockWalletByLangValues()
         titleLabel.font = Typography.boldTitle(17)
@@ -74,7 +97,11 @@ public final class UnlockDialogViewController: ModalDialogViewController,
         buttonRow.distribution = .fillEqually
         buttonRow.spacing = 12
 
-        let stack = UIStackView(arrangedSubviews: [titleLabel, passwordField, errorLabel, buttonRow])
+        // The hidden username field is placed immediately above the
+        // password field so iOS's autofill heuristic pairs them in
+        // the same vertical group; it has alpha=0 so it consumes
+        // no visual space.
+        let stack = UIStackView(arrangedSubviews: [titleLabel, usernameField, passwordField, errorLabel, buttonRow])
         stack.axis = .vertical
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false

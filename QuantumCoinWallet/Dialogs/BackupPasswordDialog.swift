@@ -19,7 +19,12 @@ import UIKit
 public final class BackupPasswordDialog: ModalDialogViewController {
 
     public enum Mode {
-        case create
+        /// Backup-creation flow. `address` is the wallet whose
+        /// backup file is being saved; threaded through so the
+        /// hidden `.username` field can scope this Save Password
+        /// prompt to a per-wallet Keychain slot
+        /// (`CredentialIdentifier.backupUsername(address:)`).
+        case create(address: String)
         case restoreSingle(address: String)
         case restoreBatch(remainingAddresses: [String])
     }
@@ -54,6 +59,42 @@ public final class BackupPasswordDialog: ModalDialogViewController {
         subtitleLabel.textAlignment = .center
         subtitleLabel.numberOfLines = 0
         subtitleLabel.textColor = .secondaryLabel
+
+        // MARK: - Keychain autofill (per-backup-file)
+        //
+        // Backup-file passwords are a DIFFERENT credential context
+        // than the vault password. To prevent a Save here from
+        // clobbering the vault credential (or vice versa), this
+        // dialog uses
+        // `CredentialIdentifier.backupUsername(address:)` /
+        // `backupBatchUsername` instead of `vaultUsername`. The
+        // prefix (`QuantumCoin-backup-...`) is what isolates these
+        // slots from the vault slot in the iOS Keychain.
+        //
+        // Every mode prepends the same hidden `.username` field
+        // (alpha 0, height 0, non-interactive) above the password
+        // field; the modes differ only in which
+        // `CredentialIdentifier` accessor supplies the value and
+        // in which `Purpose` the password field gets:
+        //   .create(address)        -> .newPassword on both pw +
+        //                              confirm; username from
+        //                              backupUsername(address:).
+        //                              Only Save target on this
+        //                              dialog.
+        //   .restoreSingle(address) -> .existingPassword on pw;
+        //                              username from
+        //                              backupUsername(address:).
+        //                              Fill-only.
+        //   .restoreBatch           -> .existingPassword on pw;
+        //                              username from
+        //                              backupBatchUsername (no
+        //                              per-address binding because
+        //                              we don't yet know which
+        //                              wallet the typed password
+        //                              decrypts). Fill-only.
+        //
+        // User-choice override: see CredentialIdentifier file
+        // header.
 
         passwordField.placeholder = L.getBackupPasswordByLangValues()
         confirmField.placeholder = L.getConfirmBackupPasswordByLangValues()
@@ -104,8 +145,13 @@ public final class BackupPasswordDialog: ModalDialogViewController {
         ])
         addressScroll.isHidden = true
 
+        // Hidden `.username` field inserted above the password
+        // field; every mode produces one but with different
+        // `CredentialIdentifier` values per the per-mode wiring
+        // documented in the MARK block above.
+        let usernameRow: UITextField
         switch mode {
-        case .create:
+        case .create(let address):
             titleLabel.text = L.getBackupPasswordByLangValues()
             // The dialog title alone tells the user what password to
             // pick; the previous subtitle copy was lifted from the
@@ -114,10 +160,20 @@ public final class BackupPasswordDialog: ModalDialogViewController {
             // is still used verbatim by SettingsViewController.
             subtitleLabel.isHidden = true
             confirmField.isHidden = false
+            // Newly-saved backup credential -> .newPassword on
+            // both fields so iOS surfaces the Save Password sheet
+            // after submit.
+            passwordField.setPurpose(.newPassword)
+            confirmField.setPurpose(.newPassword)
+            usernameRow = UsernameField.make(
+                CredentialIdentifier.backupUsername(address: address))
         case .restoreSingle(let address):
             titleLabel.text = L.getEnterBackupPasswordTitleByLangValues()
             subtitleLabel.text = address
             confirmField.isHidden = true
+            passwordField.setPurpose(.existingPassword)
+            usernameRow = UsernameField.make(
+                CredentialIdentifier.backupUsername(address: address))
         case .restoreBatch(let addresses):
             titleLabel.text = L.getEnterBackupPasswordTitleByLangValues()
             // Header line above the list. The localization value is the
@@ -137,6 +193,14 @@ public final class BackupPasswordDialog: ModalDialogViewController {
                 addressList.addArrangedSubview(row)
             }
             addressScroll.isHidden = false
+            passwordField.setPurpose(.existingPassword)
+            // Generic per-device backup slot - we cannot bind the
+            // typed password to a specific wallet address until
+            // after the decryption attempt succeeds, so use the
+            // address-less `backupBatchUsername` to avoid colliding
+            // with the per-address `.create` / `.restoreSingle` slots.
+            usernameRow = UsernameField.make(
+                CredentialIdentifier.backupBatchUsername)
         }
 
         // Trailing-aligned intrinsic-width pills with a leading spacer.
@@ -151,7 +215,7 @@ public final class BackupPasswordDialog: ModalDialogViewController {
 
         let stack = UIStackView(arrangedSubviews: [
             titleLabel, subtitleLabel, addressScroll,
-            passwordField, confirmField, errorLabel, buttons
+            usernameRow, passwordField, confirmField, errorLabel, buttons
         ])
         stack.axis = .vertical
         stack.spacing = 12

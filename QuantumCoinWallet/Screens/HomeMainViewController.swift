@@ -67,6 +67,13 @@ public final class HomeMainViewController: UIViewController,
         .reduce(0) { $0 + $1.width }
         + CGFloat(max(TokenColumn.allCases.count - 1, 0))
     private static let headerHeight: CGFloat = 36
+    /// Margin around the rounded `card` chrome so the corner radius
+    /// is visible on every edge instead of being clipped against the
+    /// chrome above (`centerStripView`) and below (`bottomNavView`).
+    /// Applied as a bottom + leading + trailing inset on
+    /// `horizontalScrollView`; the top stays flush so the strip sits
+    /// directly above the card without an extra gap.
+    private static let cardInset: CGFloat = 16
 
     private let horizontalScrollView = UIScrollView()
     /// Rounded bordered shell wrapping the header + table so the
@@ -82,6 +89,19 @@ public final class HomeMainViewController: UIViewController,
     private var nextPage = 1
     private var loading = false
     private var currentAddress: String { resolveCurrentAddress() }
+
+    /// Drives the card's "hug content with a cap" sizing. Held at
+    /// `.defaultHigh` so it can break in favor of the required
+    /// `card.heightAnchor.constraint(lessThanOrEqualTo:
+    /// horizontalScrollView.frameLayoutGuide.heightAnchor)` cap
+    /// when the token list overflows the available area. Updated
+    /// via KVO on `table.contentSize` so the card auto-shrinks the
+    /// instant a `reloadData` changes the row count.
+    private var tableHeight: NSLayoutConstraint!
+    /// Strong-held so the observation outlives `viewDidLoad`.
+    /// Released in `deinit` together with the NotificationCenter
+    /// observer.
+    private var tableContentObs: NSKeyValueObservation?
 
     public override func viewDidLoad() {
         super.viewDidLoad()
@@ -126,8 +146,14 @@ public final class HomeMainViewController: UIViewController,
         table.translatesAutoresizingMaskIntoConstraints = false
         // Span separators full-width so the row delimiter lines up
         // with every column boundary; the default 16pt inset would
-        // chop the separator before the trailing column.
+        // chop the separator before the trailing column. Pin the
+        // separator color to the shared `TokenCell.dividerColor`
+        // so the row delimiter matches the vertical column
+        // separators - otherwise iOS picks the system
+        // `UIColor.separator`, which is a different shade and
+        // makes the grid look disjoint at every row boundary.
         table.separatorInset = .zero
+        table.separatorColor = TokenCell.dividerColor
         table.cellLayoutMarginsFollowReadableWidth = false
         table.estimatedRowHeight = 44
         table.rowHeight = UITableView.automaticDimension
@@ -138,22 +164,31 @@ public final class HomeMainViewController: UIViewController,
         view.addSubview(scrollIndicator)
 
         NSLayoutConstraint.activate([
-            // Horizontal scroller fills the screen leaving a 12pt
-            // right gutter for the vertical scroll indicator.
+            // Horizontal scroller is inset on bottom + leading +
+            // trailing by `cardInset` so the rounded card border is
+            // visible on every edge. Top stays flush with `view` so
+            // the strip directly above the card meets the card edge
+            // without a visual gap. The trailing inset also doubles
+            // as the gutter for the custom vertical scroll indicator.
             horizontalScrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            horizontalScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            horizontalScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            horizontalScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+            horizontalScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -Self.cardInset),
+            horizontalScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.cardInset),
+            horizontalScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Self.cardInset),
 
-            // Card spans the scroll view's content width / viewport
-            // height so the rounded border encloses every column and
-            // every row that scrolls past underneath the sticky
-            // header.
+            // Card spans the scroll view's content width and hugs
+            // the natural stack height (`headerHeight` +
+            // `table.contentSize.height`, see `tableHeight` +
+            // `tableContentObs`) so a short token list shrinks the
+            // chrome instead of leaving an empty rounded box. The
+            // `lessThanOrEqualTo` cap kicks in only when the list
+            // overflows the available area, at which point the
+            // `.defaultHigh` `tableHeight` constraint breaks and
+            // the table fills the cap.
             card.topAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.topAnchor),
             card.bottomAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.bottomAnchor),
             card.leadingAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.leadingAnchor),
             card.trailingAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.trailingAnchor),
-            card.heightAnchor.constraint(equalTo: horizontalScrollView.frameLayoutGuide.heightAnchor),
+            card.heightAnchor.constraint(lessThanOrEqualTo: horizontalScrollView.frameLayoutGuide.heightAnchor),
 
             // Column container has fixed width = sum of all columns
             // + inter-column separators (drives `contentSize.width`)
@@ -175,16 +210,44 @@ public final class HomeMainViewController: UIViewController,
             table.leadingAnchor.constraint(equalTo: columnContainer.leadingAnchor),
             table.trailingAnchor.constraint(equalTo: columnContainer.trailingAnchor),
 
-            // Vertical thumb stays right-pinned to the visible
-            // viewport (not the scrolled column content) so it
-            // remains accessible regardless of horizontal scroll.
-            scrollIndicator.topAnchor.constraint(equalTo: view.topAnchor, constant: Self.headerHeight),
-            scrollIndicator.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            scrollIndicator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // Vertical thumb sits inside the right gutter (the
+            // 16pt strip between the card's trailing edge and the
+            // screen edge), 4pt from the screen edge so it remains
+            // an obvious tappable / readable thumb without
+            // overlapping the rounded card border. Top/bottom
+            // track the CARD bounds (not the scroll-view frame)
+            // so the indicator track shrinks together with the
+            // card when the token list is short - otherwise the
+            // track would extend into the empty area below the
+            // hugged card and render a stray thumb segment there.
+            scrollIndicator.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.headerHeight),
+            scrollIndicator.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            scrollIndicator.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
             scrollIndicator.widthAnchor.constraint(equalToConstant: 6)
         ])
         scrollIndicator.attach(to: table)
         table.register(TokenCell.self, forCellReuseIdentifier: "token")
+
+        // Drives the card's hug-content sizing. `.defaultHigh`
+        // priority lets the constraint break in favor of the
+        // required `card.heightAnchor.constraint(lessThanOrEqualTo:
+        // horizontalScrollView.frameLayoutGuide.heightAnchor)` cap
+        // when the table content overflows the available area;
+        // when the list is short, this constraint wins and the
+        // card shrinks to `headerHeight + tableHeight`.
+        tableHeight = table.heightAnchor.constraint(equalToConstant: 0)
+        tableHeight.priority = .defaultHigh
+        tableHeight.isActive = true
+
+        // KVO mirrors `table.contentSize.height` into
+        // `tableHeight.constant` so the card auto-resizes the
+        // instant a `reloadData` adds or removes rows. UITableView
+        // dispatches `contentSize` KVO notifications on the main
+        // thread, so no extra hop is required before touching
+        // Auto Layout.
+        tableContentObs = table.observe(\.contentSize, options: [.new]) { [weak self] tv, _ in
+            self?.tableHeight.constant = tv.contentSize.height
+        }
 
         // Re-fetch the token list whenever the active network is
         // switched from the top-right dropdown. Android achieves this
@@ -197,6 +260,14 @@ public final class HomeMainViewController: UIViewController,
             name: .networkConfigDidChange,
             object: nil)
 
+        // Start with the card + scroll indicator hidden: until the
+        // first API page comes back we don't know whether the
+        // wallet has any tokens, and an empty rounded card with
+        // just a column-header row sitting on the home screen
+        // reads as a broken UI. The success path of `loadNextPage`
+        // and `handleNetworkConfigDidChange` re-evaluate via
+        // `applyEmptyState()`.
+        applyEmptyState()
         loadNextPage()
     }
 
@@ -208,7 +279,21 @@ public final class HomeMainViewController: UIViewController,
         items = []
         nextPage = 1
         table.reloadData()
+        applyEmptyState()
         loadNextPage()
+    }
+
+    /// Hide the entire token-table card whenever the wallet has
+    /// no tokens to show on the active network. Without this, an
+    /// empty rounded card with just the column-header row would
+    /// linger on the home screen even when there is nothing to
+    /// list - a confusing "broken UI" affordance. Toggled instead
+    /// of removed from the view hierarchy so the layout stays
+    /// stable across reloads / network switches.
+    private func applyEmptyState() {
+        let isEmpty = items.isEmpty
+        horizontalScrollView.isHidden = isEmpty
+        scrollIndicator.isHidden = isEmpty
     }
 
     private func loadNextPage() {
@@ -223,6 +308,7 @@ public final class HomeMainViewController: UIViewController,
                 await MainActor.run {
                     self.items.append(contentsOf: resp.result ?? [])
                     self.table.reloadData()
+                    self.applyEmptyState()
                     self.nextPage += 1
                 }
             } catch {
@@ -265,8 +351,11 @@ public final class HomeMainViewController: UIViewController,
         }
 
         let rule = UIView()
-        rule.backgroundColor = (UIColor(named: "colorCommon6") ?? .label)
-            .withAlphaComponent(0.2)
+        // Same shade as every other grid line in the table so the
+        // header / first-row seam reads as one continuous 1pt
+        // divider instead of a contrast band between header alpha
+        // 0.2 and row separator default-system-gray.
+        rule.backgroundColor = TokenCell.dividerColor
         rule.translatesAutoresizingMaskIntoConstraints = false
 
         headerView.addSubview(stack)
@@ -371,16 +460,22 @@ private final class TokenCell: UITableViewCell {
                                  for: .touchUpInside)
 
         let wrapped: [UIView] = [
-            Self.wrapColumn(symbolButton,   width: TokenColumn.symbol.width),
-            Self.wrapColumn(balanceLabel,   width: TokenColumn.balance.width),
-            Self.wrapColumn(nameLabel,      width: TokenColumn.name.width),
-            Self.wrapColumn(contractButton, width: TokenColumn.contract.width)
+            Self.wrapColumn(symbolButton,   width: TokenColumn.symbol.width,   verticalInset: 8),
+            Self.wrapColumn(balanceLabel,   width: TokenColumn.balance.width,  verticalInset: 8),
+            Self.wrapColumn(nameLabel,      width: TokenColumn.name.width,     verticalInset: 8),
+            Self.wrapColumn(contractButton, width: TokenColumn.contract.width, verticalInset: 8)
         ]
         let row = UIStackView()
         row.axis = .horizontal
-        // `.fill` (not `.center`) so the inserted 1pt separator views
-        // stretch the full row height and read as continuous column
-        // dividers from header to last row.
+        // `.fill` (not `.center`) so the inserted 1pt separator
+        // views stretch the FULL `contentView` height. The 8pt
+        // vertical breathing room around the column labels lives
+        // inside `wrapColumn(verticalInset:)` instead of in the
+        // row's anchor constants - that way separators reach
+        // edge-to-edge of the cell and join up with the row
+        // separator above / below for a continuous grid line,
+        // instead of being shrunk by 16pt and leaving a visible
+        // gap at every row boundary.
         row.alignment = .fill
         row.spacing = 0
         for (idx, col) in wrapped.enumerated() {
@@ -392,43 +487,64 @@ private final class TokenCell: UITableViewCell {
         row.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(row)
         NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            row.topAnchor.constraint(equalTo: contentView.topAnchor),
+            row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    /// 1pt vertical column divider, shared by the sticky header and
-    /// every reused `TokenCell` so the header dividers line up with
-    /// the row dividers as the user scrolls. Mirrors
-    /// `AccountTransactionsViewController.makeVerticalSeparator`. The
-    /// fixed 1pt width feeds into `totalColumnsWidth` so the column
-    /// container reserves space between adjacent columns without
-    /// shrinking any column.
+    /// Single shade used for every divider that makes up the
+    /// token-table grid: the vertical column separators in the
+    /// header + every cell, the 1pt horizontal rule under the
+    /// header, and the UITableView's row separators. Centralizing
+    /// the color here is what makes the grid read as a continuous
+    /// 1pt line at every junction; previously these three sites
+    /// used three different shades (column 0.15, header rule 0.2,
+    /// row separator the system `UIColor.separator`) and the
+    /// mismatched colors are what made the dividers look disjoint.
+    static let dividerColor: UIColor =
+        (UIColor(named: "colorCommon6") ?? .label).withAlphaComponent(0.15)
+
+    /// 1pt vertical column divider, shared by the sticky header
+    /// and every reused `TokenCell` so the header dividers line up
+    /// with the row dividers as the user scrolls. Mirrors
+    /// `AccountTransactionsViewController.makeVerticalSeparator`.
+    /// The fixed 1pt width feeds into `totalColumnsWidth` so the
+    /// column container reserves space between adjacent columns
+    /// without shrinking any column.
     static func makeColumnSeparator() -> UIView {
         let v = UIView()
-        v.backgroundColor = (UIColor(named: "colorCommon6") ?? .label)
-            .withAlphaComponent(0.15)
+        v.backgroundColor = dividerColor
         v.translatesAutoresizingMaskIntoConstraints = false
         v.widthAnchor.constraint(equalToConstant: 1).isActive = true
         return v
     }
 
     /// Fixed-width column wrapper used by both this cell and the
-    /// `HomeMainViewController` header so a label / button is held to
-    /// the column's design width with a small visual gap on either
-    /// side. Exposed `static` because the header builds wrappers
-    /// independently of any row instance.
-    static func wrapColumn(_ subview: UIView, width: CGFloat) -> UIView {
+    /// `HomeMainViewController` header so a label / button is held
+    /// to the column's design width with a small visual gap on
+    /// either side. Exposed `static` because the header builds
+    /// wrappers independently of any row instance.
+    ///
+    /// `verticalInset` lets cell call sites carve out the 8pt
+    /// breathing room around labels INSIDE the wrapper (so the
+    /// wrapper itself - and therefore the sibling column-separator
+    /// view in the same `.fill`-aligned stack - reaches edge-to-
+    /// edge of the row). Header call sites pass the default 0
+    /// because the 36pt fixed header height already supplies
+    /// enough margin around the 13pt header label.
+    static func wrapColumn(_ subview: UIView,
+                           width: CGFloat,
+                           verticalInset: CGFloat = 0) -> UIView {
         let container = UIView()
         subview.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(subview)
         container.widthAnchor.constraint(equalToConstant: width).isActive = true
         NSLayoutConstraint.activate([
-            subview.topAnchor.constraint(equalTo: container.topAnchor),
-            subview.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            subview.topAnchor.constraint(equalTo: container.topAnchor, constant: verticalInset),
+            subview.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -verticalInset),
             subview.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
             subview.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6)
         ])
@@ -495,11 +611,19 @@ public final class VerticalScrollIndicatorView: UIView {
 
     public override func layoutSubviews() {
         super.layoutSubviews()
-        guard let sv = target, sv.contentSize.height > 0 else {
+        // Hide the thumb whenever the scroll view isn't actually
+        // scrollable. Without this guard, the original `viewport
+        // / max(content, viewport)` math would clamp the ratio
+        // to 1.0 for non-scrollable lists and render a thumb that
+        // fills the entire track - a misleading "scrollable"
+        // affordance at the very moment there's nothing to scroll
+        // (e.g. when the token table has hugged its content).
+        guard let sv = target,
+              sv.contentSize.height > sv.bounds.height else {
             thumb.frame = .zero; return
         }
         let viewport = max(sv.bounds.height, 1)
-        let content = max(sv.contentSize.height, viewport)
+        let content = sv.contentSize.height
         let thumbH = max(20, bounds.height * (viewport / content))
         let progress = max(0, min(1, sv.contentOffset.y / max(1, content - viewport)))
         let thumbY = (bounds.height - thumbH) * progress

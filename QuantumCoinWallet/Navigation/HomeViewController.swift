@@ -282,6 +282,29 @@ public final class HomeViewController: UIViewController {
         view.setNeedsLayout()
     }
 
+    public override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // Safety net for the cold-launch present-from-viewDidLoad
+        // race: `routeInitialScreen()` runs from viewDidLoad and, on
+        // a locked + has-wallets cold launch, immediately tries to
+        // `present(...)` the unlock gate. UIKit can silently drop
+        // that present while the rootViewController swap is still
+        // in flight, leaving the user staring at an empty chrome
+        // shell with no prompt.
+        //
+        // viewDidAppear is the safest moment to present a modal -
+        // the view is unambiguously on screen and UIKit is settled.
+        // Re-attempt here if we're still in the locked/no-modal
+        // state. The guards make this idempotent across repeated
+        // viewDidAppear fires (e.g. after dismissing a child sheet
+        // or returning from background).
+        if !KeyStore.shared.isUnlocked
+            && hasExistingWallets()
+            && presentedViewController == nil {
+            presentUnlockGate()
+        }
+    }
+
     // MARK: - Initial routing (mirrors HomeActivity branching)
 
     private func routeInitialScreen() {
@@ -318,11 +341,28 @@ public final class HomeViewController: UIViewController {
     ///     `routeInitialScreen()` uses, so success / wrong-password
     ///     UX matches the rest of the app.
     public func relockAndPresentUnlock() {
-        if presentedViewController != nil {
-            dismiss(animated: false)
-        }
+        // Blank the strip first so the user never sees the stale
+        // address through any brief gap between the dismiss
+        // completing and the unlock gate fading in.
         centerStripView.currentAddress = ""
-        presentUnlockGate()
+        if presentedViewController != nil {
+            // `dismiss(animated:false)` still hands UIKit an async
+            // tear-down; calling `present(...)` on the same runloop
+            // tick races the in-flight dismissal and UIKit silently
+            // drops the new present (the user-visible bug: metadata
+            // is cleared, strip is blank, but no unlock dialog
+            // surfaces until a later idle-timer cycle re-fires the
+            // relock).
+            //
+            // Wait for the dismiss completion before presenting so
+            // the presentation chain is empty by the time we try to
+            // surface the gate.
+            dismiss(animated: false) { [weak self] in
+                self?.presentUnlockGate()
+            }
+        } else {
+            presentUnlockGate()
+        }
     }
 
     private func presentUnlockGate() {
@@ -382,7 +422,27 @@ public final class HomeViewController: UIViewController {
                 }
             }
         }
-        present(dlg, animated: true)
+        // Cold-launch routing runs from `viewDidLoad`, before UIKit
+        // has settled the rootViewController-swap transition kicked
+        // off in AppDelegate's bootstrap completion. A synchronous
+        // `present(...)` from that window is silently dropped, which
+        // leaves the user staring at an empty chrome shell with no
+        // unlock prompt. Hopping one runloop tick lets UIKit finish
+        // the swap before we try to present.
+        //
+        // The relock path also flows through this method (via
+        // `relockAndPresentUnlock` -> `dismiss` completion -> here),
+        // and the additional async hop is imperceptible there.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // Guard against double-present from the viewDidAppear
+            // safety-net retry or a relock dispatch racing this
+            // deferred present. UnlockDialog is the only mandatory
+            // full-screen modal at this stage, so identity-checking
+            // by type is sufficient.
+            if self.presentedViewController is UnlockDialogViewController { return }
+            self.present(dlg, animated: true)
+        }
     }
 
     // MARK: - Public navigation helpers
