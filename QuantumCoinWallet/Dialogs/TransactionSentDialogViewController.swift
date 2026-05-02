@@ -73,7 +73,7 @@ public final class TransactionSentDialogViewController: ModalDialogViewControlle
             }
 
         let explorerButton = makeChromeIconButton(
-            named: "m_block_explorer",
+            named: "address_explore",
             accessibility: L.getBlockExplorerTitleByLangValues()) { [weak self] in
                 guard let self = self, !self.txHash.isEmpty else { return }
                 self.openExplorer()

@@ -205,7 +205,7 @@ public final class CenterStripView: UIView {
         addressLabel.lineBreakMode = .byCharWrapping
         addressLabel.textAlignment = .center
 
-        balanceLabel.font = Typography.boldTitle(20)
+        balanceLabel.font = Typography.body(20)
         balanceLabel.textColor = .label
 
         // All three address-action icons use the same 5pt inset so

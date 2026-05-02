@@ -207,7 +207,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
 
         // 9) Balance value.
         balanceValue.text = "0"
-        balanceValue.font = Typography.boldTitle(18)
+        balanceValue.font = Typography.body(18)
         balanceValue.textColor = UIColor(named: "colorCommon6") ?? .label
 
         // 10) "To address" label paired with the QR camera button +
@@ -822,17 +822,28 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         present(dlg, animated: true)
     }
 
-    /// Two-phase unlock flow:
-    ///  1. Validate the password by decrypting the wallet INSIDE the
-    ///     unlock dialog. On wrong/empty password the dialog stays
-    ///     up with an inline error and the typed value preserved so
-    ///     the user can fix a typo without retyping the address +
-    ///     amount + "i agree" again.
-    ///  2. Only after a successful decrypt do we dismiss the unlock
-    ///     dialog and call `runSendTransaction` with the already-
-    ///     decoded private/public keys; the actual chain submission
-    ///     never re-derives the password.
+    /// Single-pipeline unlock + submit flow. Mirrors the Android
+    /// `WaitDialog` UX where the same dialog stays on screen across
+    /// both phases, only its label text swaps:
+    ///
+    ///  1. Present the unlock dialog. On empty password show the
+    ///     inline orange error and bail without dismissing.
+    ///  2. Present a single `WaitDialog("Decrypting wallet...")` on
+    ///     top of the unlock dialog. Decrypt runs on a detached task.
+    ///  3. On wrong password / decode failure: dismiss only the wait
+    ///     dialog (animated) and show the wrong-password orange
+    ///     error layered on the unlock dialog. The user keeps the
+    ///     password field state for typo-fix retry.
+    ///  4. On successful decrypt: update `wait.message` in place to
+    ///     "Please wait while your transaction is being submitted",
+    ///     keep both unlock + wait presented, and run the chain
+    ///     submission on the same detached task. This avoids the
+    ///     dismiss/re-present flicker the previous two-dialog
+    ///     implementation introduced between phases.
+    ///  5. On submit success / failure: cascade-dismiss wait, then
+    ///     unlock, then present the sent / error dialog.
     private func presentUnlockAndSend(to: String, amount: String) {
+        let L = Localization.shared
         let dlg = UnlockDialogViewController()
         dlg.onUnlock = { [weak self, weak dlg] pw in
             guard let self = self, let dlg = dlg else { return }
@@ -841,18 +852,35 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                 return
             }
             let wait = WaitDialogViewController(
-                message: Localization.shared.getDecryptingWalletByLangValues())
+                message: L.getDecryptingWalletByLangValues())
             dlg.present(wait, animated: true)
             let walletIndex = PrefConnect.shared.readInt(
                 PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, default: 0)
+            // Resolve token decimals + scale the user-typed amount
+            // into wei BEFORE entering the detached task so the
+            // background worker never reads `self.tokens` (which is
+            // owned by the main actor). Mirrors Android
+            // `SendFragment.sendTransaction` where
+            // `CoinUtils.parseEther / parseUnits` runs on the UI
+            // thread before the signer call.
+            let weiAmount: String
+            if let contract = self.selectedTokenContract,
+               let token = self.tokens.first(
+                    where: { $0.contractAddress == contract }) {
+                weiAmount = CoinUtils.parseUnits(
+                    amount, decimals: token.decimals ?? CoinUtils.ETHER_DECIMALS)
+            } else {
+                weiAmount = CoinUtils.parseEther(amount)
+            }
             // Capture `wait`, `dlg`, and `self` weakly so the
             // detached worker never deallocates a UIViewController
             // (and its CALayers) on a background thread when the
             // task closure releases. See the prior layout-engine
             // crash fix.
-            Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
-                var result: Result<(priv: String, pub: String), Error> =
-                    .failure(KeyStoreError.decodeFailed)
+            Task.detached(priority: .userInitiated) {
+                [weak self, weak dlg, weak wait, selectedTokenContract, weiAmount] in
+                // Phase 1 - decrypt
+                let keys: (priv: String, pub: String)
                 do {
                     let encrypted = try KeyStore.shared.readWallet(
                         index: walletIndex, password: pw)
@@ -861,25 +889,62 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                     guard let parsed = SendViewController.parseDecryptWallet(decEnv) else {
                         throw KeyStoreError.decodeFailed
                     }
-                    result = .success((parsed.0, parsed.1))
+                    keys = (parsed.0, parsed.1)
                 } catch {
-                    result = .failure(error)
-                }
-                let final = result
-                await MainActor.run {
-                    wait?.dismiss(animated: true) {
-                        switch final {
-                        case .success(let keys):
-                            dlg?.dismiss(animated: true) {
-                                self?.runSendTransaction(
-                                    privKeyBase64: keys.priv,
-                                    pubKeyBase64: keys.pub,
-                                    to: to,
-                                    amount: amount)
-                            }
-                        case .failure:
+                    await MainActor.run {
+                        wait?.dismiss(animated: true) {
                             if let dlg = dlg {
                                 self?.showWrongPasswordError(over: dlg)
+                            }
+                        }
+                    }
+                    return
+                }
+
+                // Bridge from decrypt to submit by updating the
+                // existing wait dialog's message in place. The
+                // `message` property's didSet rebinds `label.text`,
+                // so the visible card just swaps copy without any
+                // dismiss / present animation in between.
+                await MainActor.run {
+                    wait?.message = L.getSubmittingTransactionByLangValues()
+                }
+
+                // Phase 2 - submit
+                do {
+                    let advancedSigning = PrefConnect.shared.readBool(
+                        PrefKeys.ADVANCED_SIGNING_ENABLED_KEY)
+                    let chainId = Constants.CHAIN_ID
+                    let rpc = Constants.RPC_ENDPOINT_URL
+                    let result: String
+                    if let contract = selectedTokenContract {
+                        result = try JsBridge.shared.sendTokenTransaction(
+                            privKeyBase64: keys.priv, pubKeyBase64: keys.pub,
+                            contractAddress: contract, toAddress: to,
+                            amountWei: weiAmount, gasLimit: "90000",
+                            rpcEndpoint: rpc, chainId: chainId,
+                            advancedSigningEnabled: advancedSigning)
+                    } else {
+                        result = try JsBridge.shared.sendTransaction(
+                            privKeyBase64: keys.priv, pubKeyBase64: keys.pub,
+                            toAddress: to, valueWei: weiAmount, gasLimit: "21000",
+                            rpcEndpoint: rpc, chainId: chainId,
+                            advancedSigningEnabled: advancedSigning)
+                    }
+                    let txHash = Self.parseTxHash(result)
+                    await MainActor.run {
+                        wait?.dismiss(animated: true) {
+                            dlg?.dismiss(animated: true) {
+                                self?.presentSentDialog(txHash: txHash)
+                            }
+                        }
+                    }
+                } catch {
+                    let msg = Self.userFacingError(error)
+                    await MainActor.run {
+                        wait?.dismiss(animated: true) {
+                            dlg?.dismiss(animated: true) {
+                                self?.presentErrorDialog(message: msg)
                             }
                         }
                     }
@@ -887,56 +952,6 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
             }
         }
         present(dlg, animated: true)
-    }
-
-    /// Phase 2 of the send pipeline -- the wallet is already
-    /// decrypted at this point, so the wait dialog only spins for
-    /// the network round-trip and any JS-bridge signing failure
-    /// that surfaces here is no longer a wrong-password scenario.
-    private func runSendTransaction(privKeyBase64: String,
-                                    pubKeyBase64: String,
-                                    to: String,
-                                    amount: String) {
-        let L = Localization.shared
-        let wait = WaitDialogViewController(
-            message: L.getSubmittingTransactionByLangValues())
-        present(wait, animated: true)
-        Task.detached(priority: .userInitiated) { [weak self, weak wait, selectedTokenContract] in
-            do {
-                let advancedSigning = PrefConnect.shared.readBool(
-                    PrefKeys.ADVANCED_SIGNING_ENABLED_KEY)
-                let chainId = Constants.CHAIN_ID
-                let rpc = Constants.RPC_ENDPOINT_URL
-                let result: String
-                if let contract = selectedTokenContract {
-                    result = try JsBridge.shared.sendTokenTransaction(
-                        privKeyBase64: privKeyBase64, pubKeyBase64: pubKeyBase64,
-                        contractAddress: contract, toAddress: to,
-                        amountWei: amount, gasLimit: "90000",
-                        rpcEndpoint: rpc, chainId: chainId,
-                        advancedSigningEnabled: advancedSigning)
-                } else {
-                    result = try JsBridge.shared.sendTransaction(
-                        privKeyBase64: privKeyBase64, pubKeyBase64: pubKeyBase64,
-                        toAddress: to, valueWei: amount, gasLimit: "21000",
-                        rpcEndpoint: rpc, chainId: chainId,
-                        advancedSigningEnabled: advancedSigning)
-                }
-                let txHash = Self.parseTxHash(result)
-                await MainActor.run {
-                    wait?.dismiss(animated: true) {
-                        self?.presentSentDialog(txHash: txHash)
-                    }
-                }
-            } catch {
-                let msg = Self.userFacingError(error)
-                await MainActor.run {
-                    wait?.dismiss(animated: true) {
-                        self?.presentErrorDialog(message: msg)
-                    }
-                }
-            }
-        }
     }
 
     /// Empty-password error surfaced as an orange "exclamation

@@ -215,7 +215,12 @@ public final class BackupOptionsViewController: UIViewController,
     private func promptBackupPasswordAndExport(target: BackupTarget,
                                                seed: [String],
                                                address: String) {
-        let dlg = BackupPasswordDialog(mode: .create)
+        // Pass `address` so the dialog's hidden `.username` field
+        // can scope the iOS Keychain Save prompt to a per-wallet
+        // slot (see `CredentialIdentifier.backupUsername(address:)`),
+        // preventing this Save from overwriting another wallet's
+        // backup credential or the vault credential.
+        let dlg = BackupPasswordDialog(mode: .create(address: address))
         dlg.onSubmit = { [weak self, weak dlg] backupPwd in
             guard let self = self else { return }
             dlg?.dismiss(animated: true) { [weak self] in

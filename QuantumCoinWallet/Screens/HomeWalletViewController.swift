@@ -143,8 +143,23 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let L = Localization.shared
         let title = makeTitle(L.getSetWalletPasswordByLangValues())
         let hint  = makeBody(L.getUseStrongPasswordByLangValues())
-        let pw = makeSecureField(placeholder: L.getPasswordByLangValues())
-        let rt = makeSecureField(placeholder: L.getRetypePasswordByLangValues())
+        // MARK: - Keychain autofill (vault create-wallet)
+        //
+        // Pairs `.newPassword` (twice: pw + rt) with a hidden
+        // `.username` carrying `CredentialIdentifier.vaultUsername`.
+        // After the user submits this step iOS may show "Save
+        // Password as QuantumCoin-<deviceSuffix>?". Saving is
+        // OPT-IN: dismissing the sheet writes nothing to Keychain
+        // and the wallet is still created. The Keychain account
+        // name is locked to vaultUsername so a future unlock can
+        // deterministically find it; allowing per-save username
+        // editing would create orphaned entries that unlock could
+        // never query. User-choice override: see
+        // CredentialIdentifier file header.
+        let usernameField = UsernameField.make(
+            CredentialIdentifier.vaultUsername)
+        let pw = makeSecureField(placeholder: L.getPasswordByLangValues(), purpose: .newPassword)
+        let rt = makeSecureField(placeholder: L.getRetypePasswordByLangValues(), purpose: .newPassword)
         let err = makeErrorLabel()
         let next = makeNextButton()
         next.addAction(UIAction { [weak self] _ in
@@ -171,7 +186,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 self?.step = .phoneBackup
             }
         }, for: .touchUpInside)
-        [title, hint, pw, rt, err, wrapPrimaryRight(next)].forEach { contentStack.addArrangedSubview($0) }
+        [title, hint, usernameField, pw, rt, err, wrapPrimaryRight(next)].forEach { contentStack.addArrangedSubview($0) }
         ModalDialogViewController.focusAndShowKeyboard(pw.underlyingTextField)
     }
 
@@ -898,7 +913,12 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     }
 
     private func promptBackupPassword(target: BackupTarget) {
-        let dlg = BackupPasswordDialog(mode: .create)
+        // Pass `generatedAddress` so the dialog's hidden `.username`
+        // field can scope the iOS Keychain Save prompt to a per-
+        // wallet slot (see `CredentialIdentifier.backupUsername(address:)`),
+        // preventing this Save from overwriting another wallet's
+        // backup credential or the vault credential.
+        let dlg = BackupPasswordDialog(mode: .create(address: generatedAddress))
         dlg.onSubmit = { [weak self, weak dlg] backupPwd in
             guard let self = self else { return }
             dlg?.dismiss(animated: true) { [weak self] in
@@ -1055,8 +1075,14 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         l.numberOfLines = 0
         return l
     }
-    private func makeSecureField(placeholder: String) -> PasswordTextField {
-        let t = PasswordTextField()
+    /// `purpose` defaults to `.existingPassword` so legacy callers
+    /// stay fill-only. Pass `.newPassword` ONLY at credential-
+    /// creation moments so iOS surfaces the Save Password sheet
+    /// (still opt-in for the user).
+    private func makeSecureField(placeholder: String,
+                                 purpose: PasswordTextField.Purpose = .existingPassword)
+        -> PasswordTextField {
+        let t = PasswordTextField(purpose: purpose)
         t.placeholder = placeholder
         return t
     }

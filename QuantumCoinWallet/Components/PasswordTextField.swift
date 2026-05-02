@@ -24,6 +24,39 @@ import UIKit
 
 public final class PasswordTextField: UIView {
 
+    /// Distinguishes "fill an existing password" from "save a brand-new
+    /// password" so iOS QuickType / Keychain knows which behavior to
+    /// apply. The choice is purely a UX hint to iOS - we never call
+    /// SecItem APIs ourselves; iOS owns the save / autofill UI.
+    ///
+    /// Security/UX tradeoff: enabling autofill at all is a deliberate
+    /// user-convenience choice. The user can always opt out by:
+    ///   1. Declining the system "Save Password?" sheet (`.newPassword`),
+    ///      so nothing is written to Keychain.
+    ///   2. Tapping the QuickType key icon and picking a different saved
+    ///      password, or just typing a fresh one.
+    ///   3. Disabling Settings > Passwords > AutoFill Passwords app-wide.
+    /// See `CredentialIdentifier` and `BackupPasswordDialog` for how
+    /// account names (usernames) are scoped to keep contexts isolated.
+    public enum Purpose {
+        /// `UITextField.textContentType = .password`. iOS may offer
+        /// to autofill a previously-saved entry whose username matches
+        /// the paired hidden/visible `.username` field, but iOS will
+        /// NOT prompt to save what the user types. Use this for unlock
+        /// and for backup-restore (the credential, if it exists at all,
+        /// was created earlier in a `.newPassword` flow).
+        case existingPassword
+
+        /// `UITextField.textContentType = .newPassword`. iOS may offer
+        /// Strong Password generation in the QuickType bar AND, after
+        /// the form submits, presents the system "Save Password as
+        /// <username>?" sheet. Saving requires an explicit user tap;
+        /// dismissing the sheet writes nothing to Keychain. Use only
+        /// at credential-creation moments (vault create-wallet, backup
+        /// .create) - never for restore/unlock.
+        case newPassword
+    }
+
     // MARK: - Public API
 
     /// Plain-text contents of the field.
@@ -72,13 +105,22 @@ public final class PasswordTextField: UIView {
 
     // MARK: - Subviews
 
+    /// Selected purpose, captured at init and used by `configure()`
+    /// to set the iOS `textContentType`. Stored so `setPurpose(_:)`
+    /// can flip it later for callers that build the field once and
+    /// only know the right purpose after a mode switch (e.g.
+    /// `BackupPasswordDialog.viewDidLoad` switching on `Mode`).
+    private var purpose: Purpose
+
     private let field: UITextField = {
         let tf = UITextField()
         tf.borderStyle = .roundedRect
         tf.isSecureTextEntry = true
         tf.autocapitalizationType = .none
         tf.autocorrectionType = .no
-        tf.textContentType = .password
+        // textContentType is set in `configure()` from `purpose` so
+        // every call site goes through one auditable switch instead
+        // of hardcoding `.password` here.
         tf.translatesAutoresizingMaskIntoConstraints = false
         return tf
     }()
@@ -105,19 +147,49 @@ public final class PasswordTextField: UIView {
 
     // MARK: - Init
 
+    /// Designated initializer. Pass `.newPassword` ONLY at
+    /// credential-creation moments so iOS surfaces the Save Password
+    /// sheet (which is still opt-in for the user). Default of
+    /// `.existingPassword` mirrors the legacy behavior so legacy
+    /// callers using `init(frame:)` keep their fill-only semantics.
+    public init(purpose: Purpose = .existingPassword) {
+        self.purpose = purpose
+        super.init(frame: .zero)
+        configure()
+    }
+
+    /// Defaults to `.existingPassword` for backwards compatibility.
+    /// Call sites that need save-on-submit must use
+    /// `init(purpose: .newPassword)` explicitly.
     public override init(frame: CGRect) {
+        self.purpose = .existingPassword
         super.init(frame: frame)
         configure()
     }
 
+    /// Defaults to `.existingPassword` for backwards compatibility.
+    /// Call sites loaded from a nib that need save-on-submit should
+    /// flip the purpose post-init via `setPurpose(_:)`.
     public required init?(coder: NSCoder) {
+        self.purpose = .existingPassword
         super.init(coder: coder)
         configure()
+    }
+
+    /// Late-binding setter for callers that build the field once
+    /// and only learn the right purpose after a runtime branch
+    /// (e.g. `BackupPasswordDialog.viewDidLoad` switching on
+    /// `Mode`). Re-runs the textContentType wiring so the change
+    /// is picked up by iOS for the next autofill / save event.
+    public func setPurpose(_ newPurpose: Purpose) {
+        self.purpose = newPurpose
+        applyPurpose()
     }
 
     private func configure() {
         addSubview(field)
         addSubview(eyeButton)
+        applyPurpose()
 
         field.delegate = self
         field.addTarget(self, action: #selector(returnHit), for: .editingDidEndOnExit)
@@ -143,6 +215,17 @@ public final class PasswordTextField: UIView {
         let spacer = UIView(frame: CGRect(x: 0, y: 0, width: 36, height: 1))
         field.rightView = spacer
         field.rightViewMode = .always
+    }
+
+    /// Route the iOS textContentType from our semantic `Purpose`.
+    /// Keeping this switch in one place ensures the
+    /// `.password` / `.newPassword` distinction is auditable from a
+    /// single grep target across the codebase.
+    private func applyPurpose() {
+        switch purpose {
+        case .existingPassword: field.textContentType = .password
+        case .newPassword:      field.textContentType = .newPassword
+        }
     }
 
     // MARK: - Eye toggle

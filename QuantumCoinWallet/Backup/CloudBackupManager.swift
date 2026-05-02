@@ -36,6 +36,14 @@ public final class CloudBackupManager: NSObject {
     /// just-saved file's URL) and so we can show the success toast.
     private var exportPickerActive: Bool = false
 
+    /// `WaitDialogViewController` shown the instant the user taps a
+    /// backup / restore button so the brief lag while iOS spins up the
+    /// `UIDocumentPickerViewController` (and, for cloud folders, scans
+    /// iCloud Drive) is not invisible. The picker is presented on top
+    /// of this dialog; the delegate methods below dismiss the dialog
+    /// after the picker tears down.
+    private var pickerLoadingDialog: WaitDialogViewController?
+
     private override init() { super.init() }
 
     // MARK: - Filename
@@ -81,7 +89,7 @@ public final class CloudBackupManager: NSObject {
         // silently and any success path is invisible to the user.
         picker.delegate = self
         exportPickerActive = true
-        vc.present(picker, animated: true)
+        presentPicker(picker, from: vc)
     }
 
     // MARK: - Folder picker (persisted bookmark)
@@ -117,7 +125,7 @@ public final class CloudBackupManager: NSObject {
             picker.directoryURL = docs
         }
         picker.delegate = self
-        vc.present(picker, animated: true)
+        presentPicker(picker, from: vc)
     }
 
     /// Write `walletJson` into the user's cloud-folder bookmark. Returns
@@ -163,7 +171,40 @@ public final class CloudBackupManager: NSObject {
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types)
         picker.allowsMultipleSelection = true
         picker.delegate = self
-        vc.present(picker, animated: true)
+        presentPicker(picker, from: vc)
+    }
+
+    // MARK: - Picker presentation with loader
+
+    /// Show a `WaitDialogViewController` immediately on `host`, then
+    /// present `picker` on top once the wait dialog finishes its
+    /// presentation animation. `UIDocumentPickerViewController(forOpening:
+    /// [.folder])` and the export / restore pickers all take a
+    /// noticeable beat to spin up (especially when iCloud Drive is
+    /// being scanned), and the user previously saw nothing at all
+    /// during that gap. The wait dialog stays parked underneath the
+    /// picker for the duration; the `UIDocumentPickerDelegate` callbacks
+    /// dismiss it after the picker tears down so the host VC is
+    /// restored to a clean state.
+    private func presentPicker(_ picker: UIDocumentPickerViewController,
+                               from host: UIViewController) {
+        let wait = WaitDialogViewController(
+            message: Localization.shared.getWaitOpeningPickerByLangValues())
+        pickerLoadingDialog = wait
+        host.present(wait, animated: true) { [weak wait] in
+            guard let wait = wait else { return }
+            wait.present(picker, animated: true)
+        }
+    }
+
+    /// Tear down the loading wait dialog after the picker dismisses.
+    /// `animated: false` because the picker has already played its own
+    /// dismissal animation; animating the wait dialog out would briefly
+    /// re-expose its scrim and look like a flash.
+    private func dismissPickerLoadingDialog() {
+        guard let wait = pickerLoadingDialog else { return }
+        pickerLoadingDialog = nil
+        wait.dismiss(animated: false)
     }
 
     // MARK: - Bookmark persistence
@@ -195,6 +236,11 @@ extension CloudBackupManager: UIDocumentPickerDelegate {
 
     public func documentPicker(_ controller: UIDocumentPickerViewController,
                                didPickDocumentsAt urls: [URL]) {
+        // Tear down the loader BEFORE running completion callbacks so
+        // any follow-on UI (toast, batched-restore wait dialog, etc.)
+        // presents from a clean host VC instead of stacking on top of
+        // the soon-to-be-dismissed loader.
+        dismissPickerLoadingDialog()
         // Branch on `exportPickerActive` *first*. Without this the
         // export's destination URL would fall through to the
         // folder-picker branch below and `persistBookmark(url)` would
@@ -224,6 +270,7 @@ extension CloudBackupManager: UIDocumentPickerDelegate {
     }
 
     public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        dismissPickerLoadingDialog()
         if exportPickerActive {
             exportPickerActive = false
             return

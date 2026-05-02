@@ -113,6 +113,7 @@ public final class Localization {
     public func getWaitWalletSaveByLangValues()        -> String { langString("waitWalletSave") }
     public func getWaitWalletOpenByLangValues()        -> String { langString("waitWalletOpen") }
     public func getWaitUnlockByLangValues()            -> String { langString("waitUnlock") }
+    public func getWaitOpeningPickerByLangValues()     -> String { langString("wait-opening-picker") }
     public func getDpscanByLangValues()                -> String { langString("dpscan") }
     public func getAddressByLangValues()               -> String { langString("address") }
     public func getCoinsByLangValues()                 -> String { langString("coins") }
@@ -196,6 +197,7 @@ public final class Localization {
     public func getNoTokensByLangValues()              -> String { langString("no-tokens") }
     public func getContractByLangValues()              -> String { langString("contract") }
     public func getSymbolByLangValues()                -> String { langString("symbol") }
+    public func getDecimalsByLangValues()              -> String { langString("decimals") }
     public func getAssetToSendByLangValues()           -> String { langString("asset-to-send") }
     public func getWhatIsBeingSentByLangValues()       -> String { langString("what-is-being-sent") }
     public func getFromAddressByLangValues()           -> String { langString("from-address") }
@@ -210,6 +212,7 @@ public final class Localization {
     public func getSubmittingTransactionByLangValues() -> String { langString("submitting-transaction") }
     public func getTransactionSentByLangValues()       -> String { langString("transaction-sent") }
     public func getTransactionIdByLangValues()         -> String { langString("transaction-id") }
+    public func getTransactionMessageExitsByLangValues() -> String { langString("transaction-message-exits") }
     public func getBackByLangValues()                  -> String { langString("back") }
     public func getConfirmWalletByLangValues()         -> String { langString("confirm-wallet") }
     public func getConfirmWalletDescriptionByLangValues() -> String { langString("confirm-wallet-description") }
