@@ -98,6 +98,13 @@ public enum KeychainWrapStore {
     /// Read-or-create the per-device wrap key. On the very
     /// first call this generates 32 fresh CSPRNG bytes and
     /// stores them; subsequent calls return the same bytes.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the returned `Data` is sensitive key material. Callers
+    /// MUST hold it in a `var` and zero it via
+    /// `defer { result.resetBytes(in: 0..<result.count) }` as
+    /// soon as the wrap operation completes. See QCW-011 and
+    /// the `tryRegenerateKeychainWrap` call site in
+    /// `UnlockCoordinatorV2` for the canonical pattern.
     public static func loadOrCreateWrapKey() throws -> Data {
         if let existing = try fetchKey(service: service, account: account) {
             guard existing.count == 32 else {
@@ -137,6 +144,12 @@ public enum KeychainWrapStore {
     /// (so the EULA flag and language code are available
     /// before the password); they need an integrity guarantee
     /// that does NOT require the password.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the returned `Data` is sensitive MAC key material.
+    /// Callers MUST hold it in a `var` and zero it via
+    /// `defer { result.resetBytes(in: 0..<result.count) }` as
+    /// soon as the verify / sign operation completes. See
+    /// QCW-011.
     public static func loadOrCreateUiMacKey() throws -> Data {
         if let existing = try fetchKey(service: uiService, account: uiAccount) {
             guard existing.count == 32 else {

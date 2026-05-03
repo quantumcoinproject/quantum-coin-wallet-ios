@@ -145,10 +145,11 @@ HomeScreenViewTypeProviding {
                     guard let encryptedJson = Strongbox.shared.encryptedSeed(at: walletIndex) else {
                         throw UnlockCoordinatorV2Error.decodeFailed
                     }
-                    let envelope = try JsBridge.shared.decryptWalletJson(
+                    var env = try JsBridge.shared.decryptWalletJson(
                         walletJson: encryptedJson, password: strongboxPassword)
-                    let seedWords = BackupExporter.extractSeedWords(
-                        fromDecryptEnvelope: envelope)
+                    let seedWords = env.seedWords ?? []
+                    env.privateKey.resetBytes(in: 0..<env.privateKey.count)
+                    env.publicKey.resetBytes(in: 0..<env.publicKey.count)
                     guard !seedWords.isEmpty else {
                         throw UnlockCoordinatorV2Error.decodeFailed
                     }

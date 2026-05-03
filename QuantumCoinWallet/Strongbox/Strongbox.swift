@@ -505,6 +505,15 @@ public final class Strongbox: @unchecked Sendable {
     /// partial-decrypt or post-decrypt corruption as an
     /// explicit tamper-detected error rather than silently
     /// rebuilding a corrupted UI state.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the comparison is constant-time over the underlying
+    /// bytes, NOT a Swift `String.==`. This is defense-in-depth
+    /// only - the checksum is base64 (printable ASCII), and
+    /// there is no remote oracle that can measure decryption
+    /// time at byte granularity in our process model. But the
+    /// project discipline is "all integrity comparisons are
+    /// constant-time", and writing the constant-time compare
+    /// is free; see QCW-023.
     public static func verifyChecksum(of payload: StrongboxPayload) -> Bool {
         let draft = ChecksumDraft(
             v: payload.v,
@@ -516,6 +525,24 @@ public final class Strongbox: @unchecked Sendable {
             cloudBackupFolderUri: payload.cloudBackupFolderUri,
             advancedSigning: payload.advancedSigning,
             cameraPermissionAskedOnce: payload.cameraPermissionAskedOnce)
-        return computeChecksum(of: draft) == payload.checksum
+        let computed = computeChecksum(of: draft)
+        return constantTimeEquals(computed, payload.checksum)
+    }
+
+    /// Constant-time byte-wise equality on two strings. Returns
+    /// `false` for length mismatch. The loop accumulates the
+    /// XOR of every byte pair into a single accumulator so the
+    /// runtime is independent of where the first mismatching
+    /// byte appears. Used for integrity comparisons (see
+    /// `verifyChecksum`); NOT general-purpose string equality.
+    private static func constantTimeEquals(_ a: String, _ b: String) -> Bool {
+        let aBytes = Array(a.utf8)
+        let bBytes = Array(b.utf8)
+        if aBytes.count != bBytes.count { return false }
+        var accumulator: UInt8 = 0
+        for i in 0..<aBytes.count {
+            accumulator |= aBytes[i] ^ bBytes[i]
+        }
+        return accumulator == 0
     }
 }

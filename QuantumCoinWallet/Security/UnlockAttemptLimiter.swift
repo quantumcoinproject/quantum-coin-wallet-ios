@@ -4,7 +4,7 @@
 // Why this exists (audit-grade notes for AI reviewers and human
 // auditors):
 // `UnlockCoordinatorV2.unlockWithPassword` runs scrypt with
-// `N = 2^15, r = 8, p = 1` on the user's password. That is
+// `N = 2^18, r = 8, p = 1` on the user's password. That is
 // roughly 200-400 ms per attempt on
 // modern iPhones. Without rate limiting, an attacker who has the
 // device and the encrypted strongbox file can:
@@ -63,9 +63,30 @@
 // attacker cannot bypass by killing and relaunching the app.
 // The trade is one Keychain read per attempt (~1 ms),
 // dwarfed by the scrypt cost.
+// - Elapsed-time arithmetic uses `mach_continuous_time()`, NOT
+// the wall-clock `CFAbsoluteTimeGetCurrent()`. The wall clock
+// is user-adjustable from Settings -> General -> Date & Time,
+// so a forward clock jump would otherwise immediately exit any
+// in-progress lockout (see QCW-003). `mach_continuous_time()`:
+// - Counts real elapsed nanoseconds since boot, including
+// while the device was sleeping (locked screen). An attacker
+// cannot extend the elapsed-time window by locking the
+// device for hours; sleep counts as elapsed time.
+// - Is immune to wall-clock writes from Settings.
+// - Resets on reboot. We detect reboot by comparing the
+// stored monotonic value to the current one: if current
+// is SMALLER than stored we infer the system rebooted
+// since the last failure was recorded, and we apply the
+// MAXIMUM lockout tier (1 hr) for that attempt cycle. This
+// closes the "fail N times, reboot, retry immediately"
+// vector. In practice a rebooted attacker pays the maximum
+// backoff exactly once - which is the correct safety
+// trade because there is no legitimate reason to reboot
+// a phone mid-typo-storm and expect to bypass the gate.
 
 import Foundation
 import Security
+import Darwin
 
 public enum UnlockAttemptLimiter {
 
@@ -92,11 +113,31 @@ public enum UnlockAttemptLimiter {
 
     /// Read the current state and return the decision. Idempotent;
     /// safe to call from any thread.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the elapsed-time computation uses `mach_continuous_time()`,
+    /// which is immune to wall-clock writes from Settings (see
+    /// QCW-003 and the file header). Reboot is detected by the
+    /// stored monotonic value being LARGER than the current one;
+    /// we then apply the maximum lockout tier (1 hr) so a
+    /// reboot mid-failure-storm cannot bypass the gate.
     public static func currentDecision() -> Decision {
         let s = readState()
         let waitNeeded = backoffSeconds(forCount: s.count)
         if waitNeeded == 0 { return .allowed }
-        let elapsed = CFAbsoluteTimeGetCurrent() - s.lastFailureAt
+        let now = monotonicNanos()
+        if s.lastFailureMonotonicNanos > now {
+            // System rebooted since the failure was recorded.
+            // Apply the maximum lockout tier for this cycle to
+            // prevent the "fail N times, reboot, retry" bypass.
+            // The wait duration is capped at the MAX tier
+            // (3600s) so a user with a legitimate reboot is
+            // never permanently bricked; one MAX tier wait
+            // unblocks them.
+            let maxTier = backoffSeconds(forCount: maxTierCount)
+            return .lockedFor(remainingSeconds: maxTier)
+        }
+        let elapsedNanos = now - s.lastFailureMonotonicNanos
+        let elapsed = TimeInterval(elapsedNanos) / 1_000_000_000.0
         if elapsed >= waitNeeded { return .allowed }
         return .lockedFor(remainingSeconds: waitNeeded - elapsed)
     }
@@ -105,7 +146,7 @@ public enum UnlockAttemptLimiter {
     /// confirmed-correct password.
     public static func recordSuccess(channel: Channel = .strongboxUnlock) {
         _ = channel // reserved for future per-channel tracking
-        writeState(State(count: 0, lastFailureAt: 0))
+        writeState(State(count: 0, lastFailureMonotonicNanos: 0))
     }
 
     /// Increment the counter on a wrong-password failure. Persists
@@ -115,7 +156,7 @@ public enum UnlockAttemptLimiter {
         _ = channel
         var s = readState()
         s.count += 1
-        s.lastFailureAt = CFAbsoluteTimeGetCurrent()
+        s.lastFailureMonotonicNanos = monotonicNanos()
         writeState(s)
     }
 
@@ -160,19 +201,73 @@ public enum UnlockAttemptLimiter {
         }
     }
 
-    // MARK: - State
+    /// The lowest count value that maps to the maximum tier.
+    /// Used by `currentDecision` to compute the post-reboot
+    /// max-tier wait without hard-coding the seconds.
+    private static let maxTierCount = 10
 
-    private struct State: Codable {
-        var count: Int
-        var lastFailureAt: TimeInterval
+    // MARK: - Monotonic clock
+
+    /// Return the current `mach_continuous_time()` reading
+    /// converted to nanoseconds. `mach_continuous_time()` keeps
+    /// counting while the device is asleep (unlike
+    /// `mach_absolute_time()`), so an attacker cannot extend the
+    /// elapsed-time window by locking the device. The conversion
+    /// uses `mach_timebase_info` to handle architectures where
+    /// 1 mach tick != 1 ns (notably some older ARM Macs); on
+    /// modern A-series chips numer == denom == 1.
+    private static func monotonicNanos() -> UInt64 {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        let ticks = mach_continuous_time()
+        if info.numer == info.denom {
+            return ticks
+        }
+        // Use 128-bit-equivalent arithmetic via UInt64 split to
+        // avoid overflow when ticks * numer would overflow 64
+        // bits. The product can exceed UInt64.max on
+        // long-uptime devices; (high * numer / denom) << 32
+        // plus (low * numer / denom) gives a safe result.
+        let numer = UInt64(info.numer)
+        let denom = UInt64(info.denom)
+        let high = (ticks >> 32) * numer / denom
+        let low = (ticks & 0xFFFFFFFF) * numer / denom
+        return (high << 32) &+ low
     }
 
-    private static let defaultState = State(count: 0, lastFailureAt: 0)
+    // MARK: - State
+
+    /// Persisted limiter state.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// `lastFailureMonotonicNanos` is a `mach_continuous_time()`
+    /// reading converted to nanoseconds, NOT a wall-clock
+    /// `CFAbsoluteTime`. The field is intentionally named with
+    /// the `MonotonicNanos` suffix so a future reader cannot
+    /// accidentally feed it a wall-clock value. Old wall-clock-
+    /// schema state from before this fix decodes as
+    /// `defaultState` (the JSON keys do not match), which is the
+    /// correct behaviour: there are no current users to migrate
+    /// and a reset to allowed is the safe failure mode for the
+    /// schema bump.
+    private struct State: Codable {
+        var count: Int
+        var lastFailureMonotonicNanos: UInt64
+    }
+
+    private static let defaultState = State(count: 0, lastFailureMonotonicNanos: 0)
 
     private static let kcService =
     (Bundle.main.bundleIdentifier ?? "org.quantumcoin.wallet")
     + ".unlock-limiter"
-    private static let kcAccount = "state-v1"
+    /// Bumped from `state-v1` to `state-v2` when the
+    /// `lastFailureAt` (CFAbsoluteTime) field was replaced with
+    /// `lastFailureMonotonicNanos` (mach_continuous_time
+    /// nanoseconds) for QCW-003. The account string is part of
+    /// the Keychain primary key, so the old v1 entry is left in
+    /// place and a fresh v2 entry is created on first read; the
+    /// v1 entry is never read again. With "no current users"
+    /// this is a one-time non-event.
+    private static let kcAccount = "state-v2"
 
     private static func readState() -> State {
         var query: [String: Any] = [

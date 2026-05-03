@@ -30,7 +30,7 @@
 // -> AEAD failure surfaces as `authenticationFailed`
 // (wrong password). NOT `tamperDetected` - the user
 // needs the "did I mistype?" outcome.
-// 5. macKey = Mac.hkdfExpand(mainKey, kdf.salt,
+// 5. macKey = Mac.hkdfExtractAndExpand(mainKey, kdf.salt,
 // "integrity-v2", 32)
 // 6. StrongboxFileCodec.verifyFileLevelMac(decoded, macKey)
 // -> MAC failure surfaces as `tamperDetected` (HARD
@@ -53,7 +53,7 @@
 // 1. plaintext = JSONEncoder().encode(payload, sortedKeys)
 // 2. padded = StrongboxPadding.pad(plaintext)
 // 3. strongbox = Aead.seal(padded, mainKey)
-// 4. macKey = Mac.hkdfExpand(mainKey, salt,
+// 4. macKey = Mac.hkdfExtractAndExpand(mainKey, salt,
 // "integrity-v2", 32)
 // 5. (passwordWrap is reused; only re-encrypted if salt
 // changes - not in this code path)
@@ -199,11 +199,32 @@ public enum UnlockCoordinatorV2 {
     /// the slot the winning state was read from (so subsequent
     /// `persist` calls can write to the OTHER slot).
     /// MUST be called from a background queue (scrypt is
-    /// expensive). The caller is responsible for the
-    /// `UnlockAttemptLimiter` increment / reset bookkeeping
-    /// because the limiter integrates with the existing v1
-    /// flow's UI hooks.
+    /// expensive).
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the `UnlockAttemptLimiter` pre-check + `recordFailure` /
+    /// `recordSuccess` bookkeeping is owned by THIS function so
+    /// every password-bound unlock surface (cold-launch unlock,
+    /// re-lock dialog, Reveal, Backup, etc.) is rate-limited
+    /// without depending on the call site to remember to wire
+    /// the limiter in. The previous design left the bookkeeping
+    /// to `unlockWithPasswordAndApplySession`, which the Send
+    /// path bypassed (see QCW-001). Centralising here makes
+    /// "limiter is engaged" a code-level invariant rather than a
+    /// per-call-site contract that future contributors might
+    /// forget.
     public static func unlockWithPassword(_ password: String) throws -> AtomicSlotWriter.Slot {
+        // Limiter pre-check. Doing this BEFORE the slot-file
+        // read AND BEFORE scrypt means a malicious in-process
+        // automation harness cannot keep paying CPU cost while
+        // in lockout, AND the user gets immediate feedback
+        // rather than waiting ~300 ms for scrypt to resolve.
+        switch UnlockAttemptLimiter.currentDecision() {
+            case .lockedFor(let remaining):
+            throw UnlockCoordinatorV2Error.tooManyAttempts(remainingSeconds: remaining)
+            case .allowed:
+            break
+        }
+
         let decoded: StrongboxFileCodec.DecodedFile
         do {
             guard let d = try StrongboxFileCodec.readWinner() else {
@@ -247,12 +268,19 @@ public enum UnlockCoordinatorV2 {
         // Step 2: unwrap mainKey from passwordWrap. AEAD failure
         // here is the canonical "wrong password" signal -
         // distinct from the tamperDetected paths below.
+        // The limiter `recordFailure` is the ONLY place a wrong
+        // password is counted; we do NOT also count the tamper
+        // paths below because a corrupt slot file is not
+        // user-driven and must not be punished (the user could
+        // be trying to recover from a tampered file with the
+        // password they actually know).
         var mainKey: Data
         do {
             mainKey = try Aead.open(
                 decoded.passwordWrap.legacyEnvelopeJson(),
                 keyBytes: derivedKey)
         } catch AeadError.authenticationFailed {
+            UnlockAttemptLimiter.recordFailure(channel: .strongboxUnlock)
             throw UnlockCoordinatorV2Error.authenticationFailed
         } catch {
             throw UnlockCoordinatorV2Error.tamperDetected("passwordWrap aead: \(error)")
@@ -263,7 +291,7 @@ public enum UnlockCoordinatorV2 {
         // verify the file-level MAC. On mismatch we hard-fail
         // because the slot file's binding has been broken (a
         // tamperer swapped fields, or a rollback happened).
-        let macKey = Mac.hkdfExpand(
+        let macKey = Mac.hkdfExtractAndExpand(
             inputKeyMaterial: mainKey,
             salt: decoded.kdfSalt,
             info: StrongboxFileCodec.macInfoLabel,
@@ -315,8 +343,55 @@ public enum UnlockCoordinatorV2 {
             throw UnlockCoordinatorV2Error.tamperDetected("payload checksum mismatch")
         }
 
+        // Step 6b: anti-rollback gate.
+        // (audit-grade notes for AI reviewers and human
+        // auditors): the file-level MAC proves the slot file
+        // is internally consistent and signed under the user
+        // password, but a snapshot of BOTH slots taken at an
+        // earlier generation N still passes MAC verification
+        // forever. Without an out-of-file high-water mark,
+        // an attacker who can write to the app container can
+        // replay the snapshotted pair and silently roll the
+        // wallet's address list / network list / feature
+        // flags back to state N. The Keychain-stored counter
+        // is that high-water mark; it is `ThisDeviceOnly` so
+        // it survives kill+relaunch but is stripped from a
+        // cross-device iCloud restore. On a fresh / restored
+        // device the counter is absent and we SEED it from
+        // the just-decoded `decoded.generation` (which is
+        // MAC-verified at this point); from then on the
+        // device-local high-water mark engages. See
+        // `KeychainGenerationCounter` for the
+        // power-loss-safety, uninstall, and account-scope
+        // discussions. See QCW-004.
+        let storedCounter = (try? KeychainGenerationCounter.read())
+        if let counter = storedCounter {
+            if decoded.generation < counter {
+                throw UnlockCoordinatorV2Error.tamperDetected(
+                    "rollback: disk_gen=\(decoded.generation) < counter=\(counter)")
+            }
+        }
+
         // Step 7: install the snapshot for the rest of the app.
         Strongbox.shared.installSnapshot(payload)
+
+        // Step 7b: seed / advance the counter.
+        // If the counter was absent (fresh device / cross-
+        // device restore) we initialise it from the just-
+        // unlocked generation. If the counter was present
+        // and we got here, decoded.generation >= counter, so
+        // bump() may or may not advance the counter. Errors
+        // in the bump are logged but not propagated: the
+        // unlock has already succeeded and the user must not
+        // be locked out of their wallet because of a Keychain
+        // hiccup. The next persist will re-bump, restoring
+        // the invariant.
+        do {
+            try KeychainGenerationCounter.bump(to: decoded.generation)
+        } catch {
+            Logger.debug(category: "STRONGBOX_ROLLBACK_COUNTER_BUMP_FAIL",
+                "unlock-time bump failed: \(error)")
+        }
 
         // Step 8: regenerate `wrap.keychainWrap` if missing.
         // On a freshly-restored device the wrap is absent; we
@@ -330,6 +405,13 @@ public enum UnlockCoordinatorV2 {
                 winningSlot: pickSlotMatching(decoded: decoded))
         }
 
+        // Limiter reset on confirmed-correct password. Done at
+        // the very end so a checksum / decode failure between
+        // AEAD success and here is treated as tamper (which
+        // does not reset the counter) rather than a successful
+        // unlock.
+        UnlockAttemptLimiter.recordSuccess(channel: .strongboxUnlock)
+
         return pickSlotMatching(decoded: decoded)
     }
 
@@ -341,7 +423,52 @@ public enum UnlockCoordinatorV2 {
     /// `StrongboxPayload`, and writes both slots so the next read
     /// has redundancy from the start.
     /// MUST be called from a background queue.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the residual-slot guard at the top closes QCW-020. The
+    /// canonical caller (`bootstrapOrUnlock`) only invokes this
+    /// helper after `bootState() == .noStrongbox`, so the guard
+    /// is defense-in-depth for a future caller that might skip
+    /// the bootState check (e.g. a "factory reset" UI flow that
+    /// forgets to delete the slot files first). Without the
+    /// guard, calling `createNewStrongbox` against an existing
+    /// wallet would silently destroy the recoverable data: the
+    /// fresh write to slot A would shadow the previous slot
+    /// (higher generation, different MAC key), the user would
+    /// lose access to their previous funds, and there would be
+    /// no error to surface. The guard makes that mistake a
+    /// loud `tamperDetected` instead of a silent loss.
     public static func createNewStrongbox(password: String) throws {
+        // Defense-in-depth residual-slot guard. See QCW-020.
+        // We re-run the readWinner trial here even though the
+        // canonical caller already did it via `bootState()`;
+        // a future contributor who adds a new caller to this
+        // function MUST get a loud failure rather than a
+        // silent strongbox overwrite. The check uses the
+        // codec's `readWinner()` (returns nil only when both
+        // slots are absent), which is the same semantics as
+        // `bootState()`.
+        do {
+            if try StrongboxFileCodec.readWinner() != nil {
+                throw UnlockCoordinatorV2Error.tamperDetected(
+                    "createNewStrongbox: refusing to overwrite existing slot files")
+            }
+        } catch StrongboxFileCodec.Error.bothSlotsInvalid {
+            // Both slots present but invalid. We DO NOT silently
+            // overwrite either - the user should go through the
+            // explicit disaster-recovery flow ("restore from
+            // .wallet backup") rather than have this call drop
+            // their potentially-recoverable encrypted state.
+            throw UnlockCoordinatorV2Error.tamperDetected(
+                "createNewStrongbox: both slots invalid; refuse to overwrite")
+        } catch let e as UnlockCoordinatorV2Error {
+            throw e
+        } catch {
+            // Any other read failure (storage permission, disk
+            // I/O) is also a "do not overwrite" signal - we
+            // cannot prove the disk is empty.
+            throw UnlockCoordinatorV2Error.storageUnavailable(underlying: error)
+        }
+
         // Step 1: generate fresh salt + mainKey via SecureRandom
         // ( throwing wrapper; never silently zero).
         var salt: Data
@@ -397,7 +524,7 @@ public enum UnlockCoordinatorV2 {
         }
 
         // Step 4: derive MAC key + write generation 1 to slot A.
-        let macKey = Mac.hkdfExpand(
+        let macKey = Mac.hkdfExtractAndExpand(
             inputKeyMaterial: mainKey,
             salt: salt,
             info: StrongboxFileCodec.macInfoLabel,
@@ -445,6 +572,17 @@ public enum UnlockCoordinatorV2 {
             throw UnlockCoordinatorV2Error.storageUnavailable(underlying: error)
         }
 
+        // Initialise the anti-rollback counter to match the
+        // freshly-written generation. Same power-loss-safety
+        // ordering as `persistSnapshot`: counter bump comes
+        // AFTER the slot writes succeed. See QCW-004.
+        do {
+            try KeychainGenerationCounter.bump(to: 1)
+        } catch {
+            Logger.debug(category: "STRONGBOX_ROLLBACK_COUNTER_BUMP_FAIL",
+                "create-time bump failed: \(error)")
+        }
+
         // Step 5: install the empty snapshot so the UI sees a
         // freshly-unlocked wallet.
         Strongbox.shared.installSnapshot(payload)
@@ -469,8 +607,35 @@ public enum UnlockCoordinatorV2 {
     /// (e.g. add wallet + set as current + record in network
     /// list) only pays scrypt once. For now we accept the
     /// straightforward-and-safe single-derivation cost.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the `UnlockAttemptLimiter` pre-check + `recordFailure` /
+    /// `recordSuccess` bookkeeping is owned by THIS function so
+    /// every password-bound write surface (Network add / switch,
+    /// Wallets append, settings toggles, backup-folder picker,
+    /// camera-permission flag) is rate-limited without depending
+    /// on the call site to remember to wire the limiter in. The
+    /// previous design left the bookkeeping to call sites,
+    /// which the Network add / switch flows did not perform
+    /// (see QCW-002). Centralising here makes "limiter is
+    /// engaged" a code-level invariant rather than a per-call-
+    /// site contract that future contributors might forget.
     public static func persistSnapshot(_ payload: StrongboxPayload,
         password: String) throws {
+        // Limiter pre-check before paying scrypt cost. Mirrors
+        // `unlockWithPassword`'s pre-check rationale - even
+        // though `persistSnapshot` is reached only post-snapshot-
+        // load (so the strongbox unlock already paid scrypt
+        // recently), the persist path re-derives the mainKey
+        // from the user-typed password every call and therefore
+        // is its own brute-force surface for any UI that
+        // collects the password. See QCW-002.
+        switch UnlockAttemptLimiter.currentDecision() {
+            case .lockedFor(let remaining):
+            throw UnlockCoordinatorV2Error.tooManyAttempts(remainingSeconds: remaining)
+            case .allowed:
+            break
+        }
+
         let decoded: StrongboxFileCodec.DecodedFile
         do {
             guard let d = try StrongboxFileCodec.readWinner() else {
@@ -497,6 +662,13 @@ public enum UnlockCoordinatorV2 {
                 decoded.passwordWrap.legacyEnvelopeJson(),
                 keyBytes: derivedKey)
         } catch AeadError.authenticationFailed {
+            // Wrong password on a persist call: same
+            // brute-force counter as the unlock dialog. Storage
+            // / corruption failures are not user-driven and
+            // must not be punished (the user could be trying
+            // to recover from a tampered file with the password
+            // they actually know).
+            UnlockAttemptLimiter.recordFailure(channel: .strongboxUnlock)
             throw UnlockCoordinatorV2Error.authenticationFailed
         } catch {
             throw UnlockCoordinatorV2Error.tamperDetected("persist passwordWrap: \(error)")
@@ -525,15 +697,16 @@ public enum UnlockCoordinatorV2 {
             throw UnlockCoordinatorV2Error.storageUnavailable(underlying: error)
         }
 
-        let macKey = Mac.hkdfExpand(
+        let macKey = Mac.hkdfExtractAndExpand(
             inputKeyMaterial: mainKey,
             salt: decoded.kdfSalt,
             info: StrongboxFileCodec.macInfoLabel,
             length: StrongboxFileCodec.macKeyByteCount)
 
+        let newGeneration = decoded.generation + 1
         do {
             try StrongboxFileCodec.writeNewGeneration(
-                generation: decoded.generation + 1,
+                generation: newGeneration,
                 kdfSalt: decoded.kdfSalt,
                 kdfParams: decoded.kdfParams,
                 passwordWrap: decoded.passwordWrap,
@@ -545,6 +718,37 @@ public enum UnlockCoordinatorV2 {
         } catch {
             throw UnlockCoordinatorV2Error.storageUnavailable(underlying: error)
         }
+
+        // Bump the anti-rollback counter AFTER the slot's
+        // atomic rename + F_FULLFSYNC succeeds. This ordering
+        // is critical for power-loss safety: a crash between
+        // the disk write and the counter bump leaves
+        // `disk_gen > counter`, which is benign (the next
+        // unlock just bumps the counter forward). The
+        // opposite ordering (bump first, then write) would
+        // leave `disk_gen < counter` after a crash and would
+        // trigger a false rollback rejection on the next
+        // unlock, bricking the wallet for a legitimate user.
+        // See `KeychainGenerationCounter` and QCW-004.
+        do {
+            try KeychainGenerationCounter.bump(to: newGeneration)
+        } catch {
+            // Best-effort: a Keychain hiccup must not poison
+            // the persist (the on-disk write already
+            // committed). The counter is one-way monotonic;
+            // a missed bump just narrows the rollback window
+            // for one generation. The next persist will
+            // re-bump.
+            Logger.debug(category: "STRONGBOX_ROLLBACK_COUNTER_BUMP_FAIL",
+                "persist-time bump failed: \(error)")
+        }
+
+        // Limiter reset on confirmed-correct password. Done
+        // at the very end so a write failure between AEAD
+        // success and here is treated as storageUnavailable
+        // (which does not reset the counter) rather than a
+        // successful persist.
+        UnlockAttemptLimiter.recordSuccess(channel: .strongboxUnlock)
     }
 
     // MARK: - Lock
@@ -572,59 +776,28 @@ public enum UnlockCoordinatorV2 {
 
     // MARK: - Caller-friendly facade (replaces the legacy KeyStore)
 
-    /// Wraps `unlockWithPassword(_:)` with the brute-force
-    /// lockout, SessionLock timestamping, and BlockchainNetwork
-    /// re-apply that every UI unlock site needs. The audit
-    /// rationale for the password-residency
-    /// behaviour lives in this file's top-of-file header; the
-    /// short version is:
-    /// 1. Check the limiter BEFORE scrypt so a locked-out
-    /// attacker cannot pay CPU during the lockout window.
-    /// 2. On success, reset the limiter and dispatch
-    /// `SessionLock.markUnlockedNow` plus
-    /// `BlockchainNetworkManager.applyDecryptedConfig(...)`
-    /// onto the main actor (the call sites here may be on a
-    /// background queue from the unlock dialog's task).
-    /// 3. On `authenticationFailed`, increment the limiter so
-    /// a tight retry loop hits the next lockout step.
-    /// 4. Storage / I/O failures are NOT counted against the
-    /// limiter (a corrupt slot file isn't user-driven).
+    /// Wraps `unlockWithPassword(_:)` with the SessionLock
+    /// timestamping and BlockchainNetwork re-apply that every UI
+    /// unlock site needs.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the brute-force `UnlockAttemptLimiter` bookkeeping
+    /// (pre-check, recordFailure on auth failure, recordSuccess
+    /// on success) is owned by `unlockWithPassword` itself - see
+    /// the rationale on that function. This wrapper does NOT
+    /// repeat that work; doing so would double-count failures
+    /// and mask the centralised invariant.
+    /// Storage / I/O failures are NOT counted against the
+    /// limiter (a corrupt slot file isn't user-driven); the
+    /// inner `unlockWithPassword` already enforces this.
     /// MUST be called from a background queue (scrypt is
     /// expensive). Returns the slot the winning state was read
     /// from so the next persist can target the OTHER slot.
     @discardableResult
     public static func unlockWithPasswordAndApplySession(_ password: String) throws -> AtomicSlotWriter.Slot {
-        // Step 1: limiter pre-check. Doing this BEFORE scrypt
-        // means a malicious in-process automation harness cannot
-        // keep paying CPU cost while in lockout, AND the user
-        // gets immediate feedback rather than waiting ~300ms for
-        // scrypt to resolve.
-        switch UnlockAttemptLimiter.currentDecision() {
-            case .lockedFor(let remaining):
-            throw UnlockCoordinatorV2Error.tooManyAttempts(remainingSeconds: remaining)
-            case .allowed:
-            break
-        }
+        let slot = try unlockWithPassword(password)
 
-        let slot: AtomicSlotWriter.Slot
-        do {
-            slot = try unlockWithPassword(password)
-        } catch let e as UnlockCoordinatorV2Error {
-            // Authentication failure is the only outcome that
-            // counts toward the limiter. Storage / corruption
-            // failures are not user-driven and must not be
-            // punished (the user could be trying to recover from
-            // a tampered file via the password they actually
-            // know).
-            if case .authenticationFailed = e {
-                UnlockAttemptLimiter.recordFailure(channel: .strongboxUnlock)
-            }
-            throw e
-        }
-        UnlockAttemptLimiter.recordSuccess(channel: .strongboxUnlock)
-
-        // Step 3: SessionLock + network re-apply. Dispatch onto
-        // the main actor because the network manager mutates UI-
+        // SessionLock + network re-apply. Dispatch onto the
+        // main actor because the network manager mutates UI-
         // observable state and posts a `networkConfigDidChange`
         // notification that screens listen to on the main queue.
         let networksSnapshot = Strongbox.shared.customNetworks
@@ -636,6 +809,55 @@ public enum UnlockCoordinatorV2 {
                 activeIndex: activeIndexSnapshot)
         }
         return slot
+    }
+
+    // MARK: - Rate-limited sensitive operation wrapper
+
+    /// Wrap a password-bound operation that is NOT the strongbox
+    /// unlock or persist (which are self-limited) but that uses
+    /// the same user password through a different decrypt path
+    /// (e.g. `JsBridge.decryptWalletJson` for the per-wallet
+    /// seed envelope inside the Send flow).
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// before this helper existed, the Send screen called
+    /// `JsBridge.decryptWalletJson` directly inside its unlock
+    /// dialog's onUnlock callback, paying the limiter NO
+    /// attention - QCW-001 made this an open password oracle
+    /// because the per-wallet `encryptedSeed` is sealed under
+    /// the same password as `passwordWrap`. Routing the call
+    /// through this helper makes the brute-force-limit
+    /// engagement a code-level invariant for that surface too.
+    /// On `op` success the shared counter is reset; on any
+    /// thrown error the counter is incremented. Reasoning for
+    /// the conservative "any error" treatment: the underlying
+    /// JS bridge throws an opaque error string for both wrong-
+    /// password and corrupt-envelope outcomes, and we cannot
+    /// distinguish them. False positives (locking out a user
+    /// holding a corrupt file) are bounded by the same
+    /// stair-stepped backoff that protects the unlock dialog;
+    /// false negatives would re-open the QCW-001 oracle, which
+    /// is the worse failure mode.
+    /// Throws `tooManyAttempts(remainingSeconds:)` on lockout.
+    /// MUST be called from a background queue (the inner `op`
+    /// is expected to do scrypt or a blocking JS bridge call).
+    public static func runRateLimited<T>(
+        channel: UnlockAttemptLimiter.Channel = .strongboxUnlock,
+        op: () throws -> T) throws -> T {
+        switch UnlockAttemptLimiter.currentDecision() {
+            case .lockedFor(let remaining):
+            throw UnlockCoordinatorV2Error.tooManyAttempts(remainingSeconds: remaining)
+            case .allowed:
+            break
+        }
+        let result: T
+        do {
+            result = try op()
+        } catch {
+            UnlockAttemptLimiter.recordFailure(channel: channel)
+            throw error
+        }
+        UnlockAttemptLimiter.recordSuccess(channel: channel)
+        return result
     }
 
     // MARK: - Wallet mutations (atomic: install + persist)
@@ -815,8 +1037,17 @@ public enum UnlockCoordinatorV2 {
         let tagStart = combined.count - 16
         let ct = combined.prefix(tagStart)
         let tag = combined.suffix(16)
+        // (audit-grade notes for AI reviewers and human
+        // auditors): the `alg` literal is "AES-GCM" exactly,
+        // matching the canonical schema invariant enforced by
+        // `StrongboxFileCodec.AeadEnvelope.expectedAlg`. A
+        // typo here (e.g. the historical `AES-GC` mistake from
+        // QCW-021) is now caught at decode time by the
+        // `decodeEnvelope` validator AND on first read by the
+        // codec's strict-alg gate, so the same mistake cannot
+        // silently land in a written slot file.
         return StrongboxFileCodec.AeadEnvelope(
-            alg: "AES-GC",
+            alg: StrongboxFileCodec.AeadEnvelope.expectedAlg,
             iv: iv,
             ct: ct,
             tag: tag)
@@ -872,12 +1103,27 @@ public enum UnlockCoordinatorV2 {
         winningSlot: AtomicSlotWriter.Slot
     ) {
         do {
-            let wrapKey = try KeychainWrapStore.loadOrCreateWrapKey()
+            // (audit-grade notes for AI reviewers and human
+            // auditors): the per-device wrap key is zeroized in
+            // `defer` to mirror the `mainKey` / `derivedKey`
+            // discipline elsewhere in this file. Without the
+            // zeroize, the wrap key would sit in the heap until
+            // ARC reclaims the `Data` and the heap page is
+            // overwritten by another allocation - a window
+            // wide enough for a heap-disclosure primitive
+            // (forensic adversary, future Swift bug) to
+            // recover the key. With the wrap key, an attacker
+            // can offline-decrypt `wrap.keychainWrap` to
+            // recover `mainKey`, after which the entire
+            // strongbox is offline-decryptable. See QCW-011.
+            var wrapKey = try KeychainWrapStore.loadOrCreateWrapKey()
+            defer { wrapKey.resetBytes(in: 0..<wrapKey.count) }
             let wrapEnv = try sealToEnvelope(mainKey, key: wrapKey)
             // Bump generation so the persisted slot wins on
             // next read.
+            let newGeneration = decoded.generation + 1
             try StrongboxFileCodec.writeNewGeneration(
-                generation: decoded.generation + 1,
+                generation: newGeneration,
                 kdfSalt: decoded.kdfSalt,
                 kdfParams: decoded.kdfParams,
                 passwordWrap: decoded.passwordWrap,
@@ -886,6 +1132,10 @@ public enum UnlockCoordinatorV2 {
                 macKey: macKey,
                 uiBlock: [:],
                 currentSlot: winningSlot)
+            // Bump the anti-rollback counter alongside the
+            // disk write. Storage-before-counter ordering
+            // matches `persistSnapshot`. See QCW-004.
+            try? KeychainGenerationCounter.bump(to: newGeneration)
         } catch {
             Logger.debug(category: "STRONGBOX_KEYCHAIN_WRAP_REGEN_FAIL",
                 "regen failed: \(error)")

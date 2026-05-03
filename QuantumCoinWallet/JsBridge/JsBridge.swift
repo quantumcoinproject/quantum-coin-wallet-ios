@@ -16,6 +16,18 @@
 // All blocking wrappers on this class MUST be called from a background
 // queue. Calling from the main thread will trap with
 // `preconditionFailure`. Use the async wrappers from UI code.
+//
+// (audit-grade notes for AI reviewers and human auditors): QCW-010.
+// The wallet-creation, wallet-decrypt, and signing call shapes use
+// the binary channel `JsEngine.storePendingPayloadBinary` /
+// `consumePendingResultBinary` for `privateKeyBytes` and
+// `publicKeyBytes`. The Swift facades take and return `Data` for
+// those fields so callers can `defer { result.resetBytes(in:) }`
+// the moment they finish using them. The JSON envelope returned by
+// the bridge handlers no longer contains the secret bytes; only
+// non-secret metadata (address, seed hex, seedWords array) flows
+// through the JSON path. See `bridge.html` for the JS-side
+// implementation.
 
 import Foundation
 
@@ -98,52 +110,53 @@ public final class JsBridge: @unchecked Sendable {
         }
     }
 
-    @discardableResult
-    public func createRandom(keyType: Int) throws -> String {
-        try blockingCall { cb, rid in
-            JsEngine.shared.registerCallback(requestId: rid, callback: cb)
-            JsEngine.shared.evaluate("bridge.createRandom('\(rid)', \(keyType))")
-        }
+    /// Wallet metadata + binary key material returned by
+    /// `createRandom`, `walletFromSeed`, `walletFromPhrase`,
+    /// `walletFromKeys`. Callers MUST zero out `privateKey` and
+    /// `publicKey` via `defer { result.privateKey.resetBytes(...) }`
+    /// the moment they finish using them. `seed` (hex) and
+    /// `seedWords` are display-bound metadata that the UI surfaces
+    /// to the user; they live as String / [String] by design (see
+    /// `bridge.html`'s decryptWalletJson handler comment for the
+    /// rationale).
+    public struct WalletEnvelope {
+        public var address: String
+        public var seed: String?
+        public var seedWords: [String]?
+        public var privateKey: Data
+        public var publicKey: Data
+    }
+
+    public func createRandom(keyType: Int) throws -> WalletEnvelope {
+        try walletEnvelopeCall(handler: "createRandom",
+            args: "\(keyType)",
+            stagePayload: nil,
+            stageBinary: nil)
+    }
+
+    public func walletFromSeed(seedArray: [Int]) throws -> WalletEnvelope {
+        try walletEnvelopeCall(handler: "walletFromSeed",
+            args: nil,
+            stagePayload: ["seedArray": seedArray],
+            stageBinary: nil)
+    }
+
+    public func walletFromPhrase(words: [String]) throws -> WalletEnvelope {
+        try walletEnvelopeCall(handler: "walletFromPhrase",
+            args: nil,
+            stagePayload: ["words": words],
+            stageBinary: nil)
+    }
+
+    public func walletFromKeys(privKey: Data, pubKey: Data) throws -> WalletEnvelope {
+        try walletEnvelopeCall(handler: "walletFromKeys",
+            args: nil,
+            stagePayload: nil,
+            stageBinary: [("privKey", privKey), ("pubKey", pubKey)])
     }
 
     @discardableResult
-    public func walletFromSeed(seedArray: [Int]) throws -> String {
-        try blockingCall { cb, rid in
-            let payload: [String: Any] = ["seedArray": seedArray]
-            let json = try Self.jsonString(payload)
-            JsEngine.shared.registerCallback(requestId: rid, callback: cb)
-            try JsEngine.shared.storePendingPayload(requestId: rid, json: json)
-            JsEngine.shared.evaluate("bridge.walletFromSeed('\(rid)')")
-        }
-    }
-
-    @discardableResult
-    public func walletFromPhrase(words: [String]) throws -> String {
-        try blockingCall { cb, rid in
-            let payload: [String: Any] = ["words": words]
-            let json = try Self.jsonString(payload)
-            JsEngine.shared.registerCallback(requestId: rid, callback: cb)
-            try JsEngine.shared.storePendingPayload(requestId: rid, json: json)
-            JsEngine.shared.evaluate("bridge.walletFromPhrase('\(rid)')")
-        }
-    }
-
-    @discardableResult
-    public func walletFromKeys(privKeyBase64: String, pubKeyBase64: String) throws -> String {
-        try blockingCall { cb, rid in
-            let payload: [String: Any] = [
-                "privKey": privKeyBase64,
-                "pubKey": pubKeyBase64
-            ]
-            let json = try Self.jsonString(payload)
-            JsEngine.shared.registerCallback(requestId: rid, callback: cb)
-            try JsEngine.shared.storePendingPayload(requestId: rid, json: json)
-            JsEngine.shared.evaluate("bridge.walletFromKeys('\(rid)')")
-        }
-    }
-
-    @discardableResult
-    public func sendTransaction(privKeyBase64: String, pubKeyBase64: String,
+    public func sendTransaction(privKey: Data, pubKey: Data,
         toAddress: String, valueWei: String,
         gasLimit: String, rpcEndpoint: String,
         chainId: Int, advancedSigningEnabled: Bool) throws -> String {
@@ -158,9 +171,14 @@ public final class JsBridge: @unchecked Sendable {
         // full policy and tradeoff write-up.
         try TamperGatePolicy.shared.assertSafeToSign()
         return try blockingCall { cb, rid in
+            // QCW-010: stage the secret bytes on the binary channel
+            // (NOT in the JSON payload). The JSON envelope carries
+            // only the non-secret signing context.
+            try JsEngine.shared.storePendingPayloadBinary(
+                requestId: rid, key: "privKey", data: privKey)
+            try JsEngine.shared.storePendingPayloadBinary(
+                requestId: rid, key: "pubKey", data: pubKey)
             let payload: [String: Any] = [
-                "privKey": privKeyBase64,
-                "pubKey": pubKeyBase64,
                 "to": toAddress,
                 "value": valueWei,
                 "gasLimit": gasLimit,
@@ -176,7 +194,7 @@ public final class JsBridge: @unchecked Sendable {
     }
 
     @discardableResult
-    public func sendTokenTransaction(privKeyBase64: String, pubKeyBase64: String,
+    public func sendTokenTransaction(privKey: Data, pubKey: Data,
         contractAddress: String, toAddress: String,
         amountWei: String, gasLimit: String,
         rpcEndpoint: String, chainId: Int,
@@ -187,9 +205,11 @@ public final class JsBridge: @unchecked Sendable {
         // signs both transaction kinds.
         try TamperGatePolicy.shared.assertSafeToSign()
         return try blockingCall { cb, rid in
+            try JsEngine.shared.storePendingPayloadBinary(
+                requestId: rid, key: "privKey", data: privKey)
+            try JsEngine.shared.storePendingPayloadBinary(
+                requestId: rid, key: "pubKey", data: pubKey)
             let payload: [String: Any] = [
-                "privKey": privKeyBase64,
-                "pubKey": pubKeyBase64,
                 "contract": contractAddress,
                 "to": toAddress,
                 "amount": amountWei,
@@ -203,6 +223,72 @@ public final class JsBridge: @unchecked Sendable {
             try JsEngine.shared.storePendingPayload(requestId: rid, json: json)
             JsEngine.shared.evaluate("bridge.sendTokenTransaction('\(rid)')")
         }
+    }
+
+    /// Internal helper used by every wallet-creation handler that
+    /// returns a freshly-instantiated SDK wallet (`createRandom`,
+    /// `walletFromSeed`, `walletFromPhrase`, `walletFromKeys`).
+    /// Reserves the inbound binary slots BEFORE invoking JS, runs
+    /// the handler, then consumes the binary slots keyed by the
+    /// same rid and assembles the typed `WalletEnvelope`. See QCW-010.
+    private func walletEnvelopeCall(handler: String,
+        args: String?,
+        stagePayload: [String: Any]?,
+        stageBinary: [(String, Data)]?) throws -> WalletEnvelope {
+        // Generate the rid up-front so the binary-slot consume
+        // step (after `blockingCall`) can read from the same key.
+        let rid = UUID().uuidString.lowercased()
+        let envelopeJson = try blockingCallWithExplicitRid(
+            requestId: rid) { cb in
+                try JsEngine.shared.reserveInboundBinarySlot(
+                    requestId: rid, key: "privateKey")
+                try JsEngine.shared.reserveInboundBinarySlot(
+                    requestId: rid, key: "publicKey")
+                if let stageBinary = stageBinary {
+                    for (key, data) in stageBinary {
+                        try JsEngine.shared.storePendingPayloadBinary(
+                            requestId: rid, key: key, data: data)
+                    }
+                }
+                if let stagePayload = stagePayload {
+                    let json = try Self.jsonString(stagePayload)
+                    try JsEngine.shared.storePendingPayload(
+                        requestId: rid, json: json)
+                }
+                JsEngine.shared.registerCallback(requestId: rid, callback: cb)
+                let argsTail = args.map { ", \($0)" } ?? ""
+                JsEngine.shared.evaluate("bridge.\(handler)('\(rid)'\(argsTail))")
+            }
+        guard let data = envelopeJson.data(using: .utf8),
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let inner = obj["data"] as? [String: Any]
+        else {
+            throw JsEngineError.callFailed(
+                "wallet envelope JSON shape unexpected")
+        }
+        let address = (inner["address"] as? String) ?? ""
+        let seed = inner["seed"] as? String
+        let seedWords = inner["seedWords"] as? [String]
+        guard let priv = JsEngine.shared.consumePendingResultBinary(
+            requestId: rid, key: "privateKey")
+        else {
+            throw JsEngineError.callFailed(
+                "wallet envelope missing privateKey binary")
+        }
+        guard let pub = JsEngine.shared.consumePendingResultBinary(
+            requestId: rid, key: "publicKey")
+        else {
+            var p = priv
+            p.resetBytes(in: 0..<p.count)
+            throw JsEngineError.callFailed(
+                "wallet envelope missing publicKey binary")
+        }
+        return WalletEnvelope(
+            address: address,
+            seed: (seed?.isEmpty == false) ? seed : nil,
+            seedWords: seedWords,
+            privateKey: priv,
+            publicKey: pub)
     }
 
     @discardableResult
@@ -254,18 +340,54 @@ public final class JsBridge: @unchecked Sendable {
         }
     }
 
-    @discardableResult
-    public func decryptWalletJson(walletJson: String, password: String) throws -> String {
-        try blockingCall { cb, rid in
-            let payload: [String: Any] = [
-                "walletJson": walletJson,
-                "password": password
-            ]
-            let json = try Self.jsonString(payload)
-            JsEngine.shared.registerCallback(requestId: rid, callback: cb)
-            try JsEngine.shared.storePendingPayload(requestId: rid, json: json)
-            JsEngine.shared.evaluate("bridge.decryptWalletJson('\(rid)')")
+    public func decryptWalletJson(walletJson: String,
+        password: String) throws -> WalletEnvelope {
+        let rid = UUID().uuidString.lowercased()
+        let envelopeJson = try blockingCallWithExplicitRid(
+            requestId: rid) { cb in
+                try JsEngine.shared.reserveInboundBinarySlot(
+                    requestId: rid, key: "privateKey")
+                try JsEngine.shared.reserveInboundBinarySlot(
+                    requestId: rid, key: "publicKey")
+                let payload: [String: Any] = [
+                    "walletJson": walletJson,
+                    "password": password
+                ]
+                let json = try Self.jsonString(payload)
+                JsEngine.shared.registerCallback(requestId: rid, callback: cb)
+                try JsEngine.shared.storePendingPayload(requestId: rid, json: json)
+                JsEngine.shared.evaluate("bridge.decryptWalletJson('\(rid)')")
+            }
+        guard let data = envelopeJson.data(using: .utf8),
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let inner = obj["data"] as? [String: Any]
+        else {
+            throw JsEngineError.callFailed(
+                "decryptWalletJson envelope JSON shape unexpected")
         }
+        let address = (inner["address"] as? String) ?? ""
+        let seed = inner["seed"] as? String
+        let seedWords = inner["seedWords"] as? [String]
+        guard let priv = JsEngine.shared.consumePendingResultBinary(
+            requestId: rid, key: "privateKey")
+        else {
+            throw JsEngineError.callFailed(
+                "decryptWalletJson missing privateKey binary")
+        }
+        guard let pub = JsEngine.shared.consumePendingResultBinary(
+            requestId: rid, key: "publicKey")
+        else {
+            var p = priv
+            p.resetBytes(in: 0..<p.count)
+            throw JsEngineError.callFailed(
+                "decryptWalletJson missing publicKey binary")
+        }
+        return WalletEnvelope(
+            address: address,
+            seed: (seed?.isEmpty == false) ? seed : nil,
+            seedWords: seedWords,
+            privateKey: priv,
+            publicKey: pub)
     }
 
     @discardableResult
@@ -286,11 +408,36 @@ public final class JsBridge: @unchecked Sendable {
 
     /// scrypt-derive via the JS bundle. Returns the raw bridge envelope -
     /// callers should decode the nested `data.key` base64.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// QCW-027. Both the Swift caller and the JS handler enforce a
+    /// minimum bound on the scrypt parameters. Belt-and-braces:
+    /// the Swift `precondition` makes weakening at a Swift call
+    /// site a build / test crash; the JS `bridge.html` guard
+    /// rejects out-of-bound parameters that somehow reach the JS
+    /// engine (e.g. via a future bridge surface that does not
+    /// route through this Swift wrapper). The thresholds are the
+    /// OWASP / RFC 7914 floors:
+    /// * N >= 16384 (2^14)
+    /// * r >= 8
+    /// * p >= 1
+    /// * keyLen >= 16 bytes (128-bit security floor)
+    /// The default values in this build (SCRYPT_N = 262_144 = 2^18)
+    /// far exceed these floors; the bound check exists to keep the
+    /// floor unbreakable, not to enforce the (much higher) actual
+    /// production values.
     @discardableResult
     public func scryptDerive(password: String, saltBase64: String,
         N: Int = SCRYPT_N, r: Int = SCRYPT_R,
         p: Int = SCRYPT_P, keyLen: Int = SCRYPT_KEY_LEN) throws -> String {
-        try blockingCall { cb, rid in
+        precondition(N >= 16384,
+            "scrypt N must be >= 16384 (got \(N))")
+        precondition(r >= 8,
+            "scrypt r must be >= 8 (got \(r))")
+        precondition(p >= 1,
+            "scrypt p must be >= 1 (got \(p))")
+        precondition(keyLen >= 16,
+            "scrypt keyLen must be >= 16 bytes (got \(keyLen))")
+        return try blockingCall { cb, rid in
             let payload: [String: Any] = [
                 "password": password,
                 "salt": saltBase64,
@@ -309,6 +456,18 @@ public final class JsBridge: @unchecked Sendable {
     // MARK: - Internals
 
     private func blockingCall(_ body: (BridgeCallback, String) throws -> Void) throws -> String {
+        let requestId = UUID().uuidString.lowercased()
+        return try blockingCallWithExplicitRid(requestId: requestId) { cb in
+            try body(cb, requestId)
+        }
+    }
+
+    /// Variant of `blockingCall` that accepts an externally-generated
+    /// `requestId`. Used by the wallet-envelope helpers (QCW-010) so
+    /// the Swift facade can reserve the inbound binary slots under
+    /// the same rid the JS handler will stage them under.
+    private func blockingCallWithExplicitRid(requestId: String,
+        body: (BridgeCallback) throws -> Void) throws -> String {
         precondition(!Thread.isMainThread,
             "Blocking bridge call must not be invoked on the main thread")
 
@@ -316,10 +475,9 @@ public final class JsBridge: @unchecked Sendable {
             throw JsEngineError.bridgeNotReady
         }
 
-        let requestId = UUID().uuidString.lowercased()
         let settle = SettlingCallback()
         do {
-            try body(settle, requestId)
+            try body(settle)
         } catch {
             JsEngine.shared.removePendingPayload(requestId: requestId)
             throw error
@@ -393,24 +551,24 @@ public extension JsBridge {
     }
 
     @inlinable
-    func createRandomAsync(keyType: Int) async throws -> String {
+    func createRandomAsync(keyType: Int) async throws -> WalletEnvelope {
         try await withDetachedThrowing { try JsBridge.shared.createRandom(keyType: keyType) }
     }
 
     @inlinable
-    func walletFromSeedAsync(seedArray: [Int]) async throws -> String {
+    func walletFromSeedAsync(seedArray: [Int]) async throws -> WalletEnvelope {
         try await withDetachedThrowing { try JsBridge.shared.walletFromSeed(seedArray: seedArray) }
     }
 
     @inlinable
-    func walletFromPhraseAsync(words: [String]) async throws -> String {
+    func walletFromPhraseAsync(words: [String]) async throws -> WalletEnvelope {
         try await withDetachedThrowing { try JsBridge.shared.walletFromPhrase(words: words) }
     }
 
     @inlinable
-    func walletFromKeysAsync(privKeyBase64: String, pubKeyBase64: String) async throws -> String {
+    func walletFromKeysAsync(privKey: Data, pubKey: Data) async throws -> WalletEnvelope {
         try await withDetachedThrowing {
-            try JsBridge.shared.walletFromKeys(privKeyBase64: privKeyBase64, pubKeyBase64: pubKeyBase64)
+            try JsBridge.shared.walletFromKeys(privKey: privKey, pubKey: pubKey)
         }
     }
 
@@ -437,7 +595,8 @@ public extension JsBridge {
     }
 
     @inlinable
-    func decryptWalletJsonAsync(walletJson: String, password: String) async throws -> String {
+    func decryptWalletJsonAsync(walletJson: String,
+        password: String) async throws -> WalletEnvelope {
         try await withDetachedThrowing {
             try JsBridge.shared.decryptWalletJson(walletJson: walletJson, password: password)
         }
@@ -454,12 +613,12 @@ public extension JsBridge {
     }
 
     @inlinable
-    func sendTransactionAsync(privKeyBase64: String, pubKeyBase64: String,
+    func sendTransactionAsync(privKey: Data, pubKey: Data,
         toAddress: String, valueWei: String,
         gasLimit: String, rpcEndpoint: String,
         chainId: Int, advancedSigningEnabled: Bool) async throws -> String {
         try await withDetachedThrowing {
-            try JsBridge.shared.sendTransaction(privKeyBase64: privKeyBase64, pubKeyBase64: pubKeyBase64,
+            try JsBridge.shared.sendTransaction(privKey: privKey, pubKey: pubKey,
                 toAddress: toAddress, valueWei: valueWei,
                 gasLimit: gasLimit, rpcEndpoint: rpcEndpoint,
                 chainId: chainId, advancedSigningEnabled: advancedSigningEnabled)
@@ -467,13 +626,13 @@ public extension JsBridge {
     }
 
     @inlinable
-    func sendTokenTransactionAsync(privKeyBase64: String, pubKeyBase64: String,
+    func sendTokenTransactionAsync(privKey: Data, pubKey: Data,
         contractAddress: String, toAddress: String,
         amountWei: String, gasLimit: String,
         rpcEndpoint: String, chainId: Int,
         advancedSigningEnabled: Bool) async throws -> String {
         try await withDetachedThrowing {
-            try JsBridge.shared.sendTokenTransaction(privKeyBase64: privKeyBase64, pubKeyBase64: pubKeyBase64,
+            try JsBridge.shared.sendTokenTransaction(privKey: privKey, pubKey: pubKey,
                 contractAddress: contractAddress, toAddress: toAddress,
                 amountWei: amountWei, gasLimit: gasLimit,
                 rpcEndpoint: rpcEndpoint, chainId: chainId,

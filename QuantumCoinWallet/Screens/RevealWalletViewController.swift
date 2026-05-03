@@ -15,8 +15,7 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
 
     public var screenViewType: ScreenViewType { .innerFragment }
 
-    private let decryptedEnvelope: String
-    private var seedWords: [String] = []
+    private var seedWords: [String]
     /// Inline "Copied" feedback label rendered to the right of the
     /// Copy link. Mirrors the `textView_reveal_seed_words_view_copied`
     /// view from `reveal_wallet_fragment.xml` which is `gone` by
@@ -24,9 +23,20 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
     /// the closure-based 600ms hide does not retain the row when the
     /// VC has been popped.
     private weak var copiedLabel: UILabel?
+    /// QCW-014: hides the seed grid when the screen is being
+    /// recorded or mirrored (AirPlay, QuickTime, Control-Center
+    /// recording, etc.). See `ScreenCaptureGuard.swift` for the
+    /// full set of caveats and tradeoffs.
+    private var captureGuard: ScreenCaptureGuard?
 
-    public init(decryptedEnvelope: String) {
-        self.decryptedEnvelope = decryptedEnvelope
+    /// Caller is responsible for supplying ALREADY-decrypted seed
+    /// words. The reveal screen only displays the words and never
+    /// touches the JS bridge, the strongbox, or any key bytes -
+    /// so QCW-010's binary-channel discipline holds: the per-
+    /// wallet `WalletEnvelope.privateKey`/`publicKey` were already
+    /// zeroized by the unlock flow before this VC was instantiated.
+    public init(seedWords: [String]) {
+        self.seedWords = seedWords
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -36,8 +46,6 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
     public override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(named: "colorBackground") ?? .systemBackground
-
-        seedWords = Self.parseSeeds(decryptedEnvelope)
 
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -64,23 +72,45 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
         stack.addArrangedSubview(makeBackBar())
         stack.addArrangedSubview(makeTitle(Localization.shared.getSeedWordsByLangValues()))
         stack.addArrangedSubview(makeRule())
-        stack.addArrangedSubview(SeedChipGrid(words: seedWords, editable: false))
+        let grid = SeedChipGrid(words: seedWords, editable: false)
+        stack.addArrangedSubview(grid)
         stack.addArrangedSubview(makeRule())
         stack.addArrangedSubview(makeCopyRow())
+
+        let warning = makeCaptureWarning()
+        captureGuard = ScreenCaptureGuard(
+            protectedView: grid, host: stack, warningView: warning)
 
         // Apply alpha-dim press feedback to the back-arrow and the
         // bottom-left copy row's icon + "Copy" link.
         view.installPressFeedbackRecursive()
     }
 
-    // MARK: - Parsing
+    public override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        captureGuard?.refresh()
+    }
 
-    private static func parseSeeds(_ envelope: String) -> [String] {
-        guard let data = envelope.data(using: .utf8),
-        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-        let inner = obj["data"] as? [String: Any]
-        else { return [] }
-        return (inner["seedWords"] as? [String]) ?? []
+    /// Warning panel pinned over the seed grid whenever the screen
+    /// is being captured. See QCW-014.
+    private func makeCaptureWarning() -> UIView {
+        let v = UIView()
+        v.backgroundColor = (UIColor(named: "colorBackground") ?? .systemBackground)
+        let label = UILabel()
+        label.text = Localization.shared.getSeedHiddenForCaptureByLangValues()
+        label.font = Typography.body(13)
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        label.textColor = UIColor(named: "colorCommon6") ?? .label
+        label.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(label)
+        NSLayoutConstraint.activate([
+                label.topAnchor.constraint(equalTo: v.topAnchor, constant: 12),
+                label.bottomAnchor.constraint(equalTo: v.bottomAnchor, constant: -12),
+                label.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 16),
+                label.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -16)
+            ])
+        return v
     }
 
     // MARK: - Widgets

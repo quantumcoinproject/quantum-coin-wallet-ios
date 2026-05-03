@@ -84,8 +84,6 @@ targets:
         NSCameraUsageDescription: >-
           Camera access is used to scan QR codes when entering a recipient
           wallet address.
-        NSPhotoLibraryUsageDescription: >-
-          Photo Library access is used to scan QR codes from saved images.
         # Both flags disabled so the QuantumCoin
         # folder no longer appears in iOS Files / iTunes / Finder.
         # The app does NOT write user-visible files to its sandbox

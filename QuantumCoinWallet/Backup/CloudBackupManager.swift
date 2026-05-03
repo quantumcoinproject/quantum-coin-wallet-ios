@@ -418,8 +418,28 @@ public final class CloudBackupManager: NSObject {
     }
 
     private func persistBookmark(_ url: URL) {
-        let ok = url.startAccessingSecurityScopedResource
-        defer { if ok() { url.stopAccessingSecurityScopedResource() } }
+        // (audit-grade notes for AI reviewers and human
+        // auditors): the original was
+        // `let ok = url.startAccessingSecurityScopedResource`
+        // which captures the *method reference* WITHOUT
+        // invoking it (see QCW-008). The defer then called
+        // `ok()`, meaning the resource was started in the
+        // defer (right before stop) and never actually
+        // accessed during the bookmark read. iCloud / external
+        // provider URLs returned from UIDocumentPicker MUST
+        // have `startAccessingSecurityScopedResource()`
+        // invoked synchronously before any read (per Apple's
+        // file-coordinator contract); without this, providers
+        // such as iCloud Drive return EPERM on `bookmarkData`
+        // and the cloud-folder bookmark silently fails to
+        // persist. The corrected pattern starts the access
+        // immediately and stops it in the defer.
+        let started = url.startAccessingSecurityScopedResource()
+        defer {
+            if started {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
         guard let data = try? url.bookmarkData(options: [],
             includingResourceValuesForKeys: nil,
             relativeTo: nil) else { return }

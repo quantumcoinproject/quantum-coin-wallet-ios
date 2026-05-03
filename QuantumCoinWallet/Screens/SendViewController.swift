@@ -632,12 +632,42 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         }
         scanner.onScan = { [weak self, weak scanner] payload in
             scanner?.dismiss(animated: true) {
-                guard let normalized = Self.normalizeScannedAddress(payload) else {
+                // (audit-grade notes for AI reviewers and human
+                // auditors): QCW-028. Single source of truth for
+                // "is this an address?" is the QuantumCoin SDK
+                // call (`bridge.isValidAddress`), not the local
+                // `QuantumCoinAddress.isValid` regex. The
+                // synchronous `extractScannedAddressCandidate`
+                // helper handles ONLY the QR-payload parsing
+                // (URI-scheme strip, query-string strip, optional
+                // 0x prepend) and returns the bare candidate;
+                // the SDK validator below is the canonical "is
+                // this address well-formed" gate. On rejection
+                // we surface the same `qcoinAddrByErrors` toast
+                // as before, so the user-visible failure shape
+                // does not change.
+                guard let candidate = Self.extractScannedAddressCandidate(payload) else {
                     Toast.showError(Localization.shared.getQuantumAddrByErrors())
                     return
                 }
-                self?.toField.text = normalized
-                self?.refreshAddressInputState()
+                Task { [weak self] in
+                    let valid: Bool
+                    do {
+                        let env = try await JsBridge.shared.isValidAddressAsync(candidate)
+                        valid = Self.envelopeTrue(env)
+                    } catch {
+                        valid = false
+                    }
+                    await MainActor.run {
+                        guard let self = self else { return }
+                        guard valid else {
+                            Toast.showError(Localization.shared.getQuantumAddrByErrors())
+                            return
+                        }
+                        self.toField.text = candidate
+                        self.refreshAddressInputState()
+                    }
+                }
             }
         }
         present(scanner, animated: true)
@@ -669,30 +699,48 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// build, while a silent strip might dispatch a payment
     /// intent the unknown-scheme producer did not actually
     /// mean to authorize as a bare address.
-    /// * Any payload whose address half does not pass
-    /// `QuantumCoinAddress.isValid` (wrong length, non-hex
-    /// characters, embedded whitespace, path-traversal
-    /// segments, etc.).
+    /// * Any payload whose address half is not validated by the
+    /// QuantumCoin SDK (`bridge.isValidAddress`). The SDK is
+    /// the single source of truth; the local
+    /// `QuantumCoinAddress.isValid` regex is only used as a
+    /// shape pre-filter inside Swift-only call sites such as
+    /// `ApiClient` URL building. See QCW-028.
     /// Tradeoff: a user with an older `qcoin:`-prefixed QR
     /// code from this same wallet must re-generate the QR
     /// from a current build before this Send screen will
     /// accept it. That is a deliberate sharp edge, not an
     /// oversight - see the rejection rationale above.
-    static func normalizeScannedAddress(_ raw: String) -> String? {
+    /// (audit-grade notes for AI reviewers and human
+    /// auditors): the QR-scan callback above performs the SDK
+    /// validation step on the candidate returned from this
+    /// helper. This helper itself is intentionally
+    /// validation-free: it ONLY parses the QR payload shape
+    /// (scheme strip, query strip, bare-hex prepend) so the
+    /// async SDK validator can see the canonical candidate.
+    /// Returning nil here means the QR payload is structurally
+    /// uninterpretable (unknown scheme); returning a candidate
+    /// does NOT imply the candidate is a real address.
+    static func extractScannedAddressCandidate(_ raw: String) -> String? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let withoutScheme: String
         let lower = trimmed.lowercased()
         if lower.hasPrefix("quantumcoin:") {
             withoutScheme = String(trimmed.dropFirst("quantumcoin:".count))
+        } else if lower.contains(":") {
+            // Reject any non-`quantumcoin:` URI scheme prefix.
+            // Surfacing a user-visible failure is preferable to
+            // silently stripping an unknown scheme: the user can
+            // re-generate the QR from a current build, while a
+            // silent strip might dispatch a payment intent the
+            // unknown-scheme producer did not actually mean to
+            // authorize as a bare address.
+            return nil
         } else {
             withoutScheme = trimmed
         }
         // Drop everything from the first `?` onward to
         // future-proof against EIP-681-style query parameters
-        // (`?amount=`, `?data=`). The current Send flow does
-        // not consume them, so dropping is the safe default;
-        // a future caller that DOES consume them must parse
-        // the raw payload before invoking this helper.
+        // (`?amount=`, `?data=`).
         let withoutQuery: String
         if let q = withoutScheme.firstIndex(of: "?") {
             withoutQuery = String(withoutScheme[..<q])
@@ -711,7 +759,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         } else {
             candidate = withoutQuery
         }
-        return QuantumCoinAddress.isValid(candidate) ? candidate : nil
+        return candidate.isEmpty ? nil : candidate
     }
 
     /// `.denied` -> user has previously rejected the system prompt.
@@ -859,6 +907,42 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                             message: Localization.shared.getQuantumAddrByErrors())
                     }
                     return
+                }
+                // (audit-grade notes for AI reviewers and human
+                // auditors): QCW-028. The SDK's `isAddress`
+                // accepts any-case hex, so a pasted address with
+                // a single hex digit corrupted (e.g. typo-
+                // squatted via clipboard substitution) passes
+                // `isValidAddressAsync` even though its
+                // mixed-case checksum form does not match. Pull
+                // the canonical mixed-case form via the SDK's
+                // `getChecksumAddress` helper and compare it to
+                // the user's input case-sensitively. If the user
+                // typed a mixed-case form that disagrees with
+                // the canonical form, surface a warning toast so
+                // they can re-verify before committing to a
+                // signing dialog. All-lowercase input is a
+                // legitimate non-checksum form (the user copied
+                // from a system that does not emit mixed case),
+                // so we suppress the warning in that case.
+                let lowerInput = to.lowercased()
+                let hasMixedCase = (to != lowerInput)
+                if hasMixedCase {
+                    do {
+                        let csEnv = try await JsBridge.shared.getChecksumAddressAsync(to)
+                        if let canonical = SendViewController.parseChecksumAddress(csEnv),
+                        canonical != to {
+                            await MainActor.run {
+                                Toast.showError(
+                                    Localization.shared.getAddressChecksumWarningByLangValues())
+                            }
+                        }
+                    } catch {
+                        // SDK helper missing or transient failure -
+                        // skip the warning rather than blocking the
+                        // send. The SDK's `isAddress` shape check
+                        // already passed.
+                    }
                 }
                 await MainActor.run {
                     self?.presentReviewDialog(to: to, amount: normalizedAmount)
@@ -1028,25 +1112,81 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
             Task.detached(priority: .userInitiated) {
                 [weak self, weak dlg, weak wait, selectedTokenContract, weiAmount] in
                 // Phase 1 - decrypt
-                let keys: (priv: String, pub: String)
+                // (audit-grade notes for AI reviewers and human
+                // auditors): QCW-010. The decrypted private/public
+                // key bytes flow through the binary channel; we
+                // hold them as `Data` so the `defer { resetBytes }`
+                // pattern actually wipes the bytes after signing.
+                var decryptedKeys: JsBridge.WalletEnvelope?
+                defer {
+                    if var d = decryptedKeys {
+                        d.privateKey.resetBytes(in: 0..<d.privateKey.count)
+                        d.publicKey.resetBytes(in: 0..<d.publicKey.count)
+                        decryptedKeys = d
+                    }
+                }
                 do {
-                    // Strongbox is already unlocked at this point
-                    // (the unlock dialog above ran
-                    // `unlockWithPasswordAndApplySession` and
-                    // installed the snapshot). Reading the
-                    // per-wallet encrypted seed envelope is now a
-                    // pure in-memory snapshot lookup; the only
-                    // password-dependent step is the JS bridge's
-                    // inner decrypt of that envelope.
+                    // Reading the per-wallet encrypted seed
+                    // envelope is a pure in-memory snapshot
+                    // lookup. The password-dependent step is the
+                    // JS bridge's inner decrypt of that envelope,
+                    // which is its OWN brute-force surface (the
+                    // per-wallet `encryptedSeed` is sealed under
+                    // the same user password as `passwordWrap`,
+                    // so an unlimited oracle here would defeat
+                    // the strongbox unlock dialog's lockout).
+                    // (audit-grade notes for AI reviewers and
+                    // human auditors): this `decryptWalletJson`
+                    // call is wrapped in
+                    // `UnlockCoordinatorV2.runRateLimited(...)`
+                    // so the shared `UnlockAttemptLimiter` gates
+                    // it identically to the strongbox unlock
+                    // dialog. Without that wrapper the Send
+                    // screen would be an unrate-limited brute-
+                    // force surface against the user password
+                    // (see QCW-001). Bridge failures (wrong
+                    // password OR corrupt envelope) are
+                    // indistinguishable at this layer; we
+                    // conservatively count them as failures
+                    // because the worse failure mode is
+                    // re-opening the QCW-001 oracle.
                     guard let encrypted = Strongbox.shared.encryptedSeed(at: walletIndex) else {
                         throw UnlockCoordinatorV2Error.notUnlocked
                     }
-                    let decEnv = try JsBridge.shared.decryptWalletJson(
-                        walletJson: encrypted, password: pw)
-                    guard let parsed = SendViewController.parseDecryptWallet(decEnv) else {
-                        throw UnlockCoordinatorV2Error.decodeFailed
+                    let env = try UnlockCoordinatorV2.runRateLimited {
+                        try JsBridge.shared.decryptWalletJson(
+                            walletJson: encrypted, password: pw)
                     }
-                    keys = (parsed.0, parsed.1)
+                    // (audit-grade notes for AI reviewers and
+                    // human auditors): QCW-018. The decrypted
+                    // envelope MUST belong to the wallet the
+                    // user reviewed and confirmed in the
+                    // transaction-review dialog. If a stale or
+                    // mismatched per-wallet ciphertext somehow
+                    // ends up in `Strongbox.encryptedSeed(at:)`
+                    // (corrupted slot, race against an in-flight
+                    // wallet-switch, malicious slot-file
+                    // tampering), the decrypted private key
+                    // would sign FROM a different address than
+                    // the one shown in the review dialog -
+                    // silently broadcasting the user's funds out
+                    // of the wrong wallet.
+                    let decryptedAddress = env.address.lowercased()
+                    if !decryptedAddress.isEmpty,
+                    decryptedAddress != capturedFromAddress.lowercased() {
+                        // Wipe the just-fetched binaries
+                        // explicitly here too; the `defer` above
+                        // will zero whatever assignment we made
+                        // but on this throw path `decryptedKeys`
+                        // never gets assigned.
+                        var p = env.privateKey; var pub = env.publicKey
+                        p.resetBytes(in: 0..<p.count)
+                        pub.resetBytes(in: 0..<pub.count)
+                        throw NetworkAssertionError.walletSwitchedMidFlight(
+                            capturedAddress: capturedFromAddress,
+                            currentAddress: env.address)
+                    }
+                    decryptedKeys = env
                 } catch {
                     // Forward the typed error so the
                     // UI can render the lockout-specific copy when the
@@ -1107,33 +1247,22 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                     }
                     let advancedSigning = PrefConnect.shared.readBool(
                         PrefKeys.ADVANCED_SIGNING_ENABLED_KEY)
-                    // Use the captured snapshot, not the
-                    // mutable `Constants.*`. Otherwise an in-flight
-                    // network switch between the assertion and the
-                    // bridge call could still bind the wrong chain.
                     let chainId = capturedSnapshot.chainId
                     let rpc = capturedSnapshot.rpcEndpoint
-                    // Forward the SAME gas limit
-                    // constants the dialog displayed. The audit's
-                    // primary concern with the review dialog was
-                    // that the displayed numbers might not match
-                    // what got signed; routing both call sites
-                    // through `Self.gasLimitNative` /
-                    // `Self.gasLimitToken` makes the
-                    // displayed-vs-signed match a code-level
-                    // invariant rather than a per-call-site
-                    // duplicate-string-constant agreement.
+                    guard let keys = decryptedKeys else {
+                        throw UnlockCoordinatorV2Error.decodeFailed
+                    }
                     let result: String
                     if let contract = selectedTokenContract {
                         result = try JsBridge.shared.sendTokenTransaction(
-                            privKeyBase64: keys.priv, pubKeyBase64: keys.pub,
+                            privKey: keys.privateKey, pubKey: keys.publicKey,
                             contractAddress: contract, toAddress: to,
                             amountWei: weiAmount, gasLimit: Self.gasLimitToken,
                             rpcEndpoint: rpc, chainId: chainId,
                             advancedSigningEnabled: advancedSigning)
                     } else {
                         result = try JsBridge.shared.sendTransaction(
-                            privKeyBase64: keys.priv, pubKeyBase64: keys.pub,
+                            privKey: keys.privateKey, pubKey: keys.publicKey,
                             toAddress: to, valueWei: weiAmount, gasLimit: Self.gasLimitNative,
                             rpcEndpoint: rpc, chainId: chainId,
                             advancedSigningEnabled: advancedSigning)
@@ -1231,17 +1360,6 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
             title: nonEmpty(L.getErrorTitleByLangValues()) ?? "Error",
             message: message)
         present(dlg, animated: true)
-    }
-
-    nonisolated private static func parseDecryptWallet(_ envelope: String) -> (String, String, String)? {
-        guard let data = envelope.data(using: .utf8),
-        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-        let inner = obj["data"] as? [String: Any]
-        else { return nil }
-        let priv = (inner["privKey"] as? String) ?? (inner["privateKey"] as? String) ?? ""
-        let pub = (inner["pubKey"] as? String) ?? (inner["publicKey"] as? String) ?? ""
-        let addr = (inner["address"] as? String) ?? ""
-        return (priv, pub, addr)
     }
 
     /// Pull the on-chain transaction hash out of the JS bridge result

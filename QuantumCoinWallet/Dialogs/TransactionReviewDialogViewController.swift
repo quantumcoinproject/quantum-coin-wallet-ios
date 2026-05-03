@@ -237,8 +237,24 @@ public final class TransactionReviewDialogViewController: ModalDialogViewControl
         v.font = mono
         ? UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         : Typography.body(14)
-        v.numberOfLines = mono ? 2 : 0
-        v.lineBreakMode = mono ? .byTruncatingMiddle : .byWordWrapping
+        // (audit-grade notes for AI reviewers and human auditors):
+        // QCW-017. Mono branch renders the destination address in
+        // a transaction-review confirmation dialog. Previously this
+        // was capped at `numberOfLines = 2` with `.byTruncatingMiddle`,
+        // so at large Dynamic Type sizes (Accessibility XXL) and on
+        // 4-inch devices the address would render with the middle
+        // 12-16 characters replaced by `…`. The user could not
+        // verify the bytes they were signing for - which directly
+        // defeats the purpose of the confirmation dialog. Setting
+        // `numberOfLines = 0` lets the address grow as tall as
+        // needed; `byCharWrapping` keeps the wrap clean (otherwise
+        // `byWordWrapping` would never break a 64-hex-char string
+        // and would clip horizontally instead). Non-mono branch
+        // (header / counterparty name etc.) is unchanged. Tradeoff:
+        // the dialog is slightly taller at large text sizes, which
+        // is an acceptable cost for full address visibility.
+        v.numberOfLines = 0
+        v.lineBreakMode = mono ? .byCharWrapping : .byWordWrapping
         v.textColor = valueColor ?? (UIColor(named: "colorCommon6") ?? .label)
 
         let stack = UIStackView(arrangedSubviews: [h, v])

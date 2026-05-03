@@ -118,64 +118,13 @@ public enum BackupExporter {
         return nil
     }
 
-    /// Pull the seed-phrase mnemonic out of `JsBridge.decryptWalletJson`'s
-    /// envelope. The bridge result (see `bridge.html` lines 421-427) is:
-    /// ```
-    /// { success: true,
-    /// data: { address, privateKey, publicKey,
-    /// seed: "<hex>" | null,
-    /// seedWords: ["abandon", ...] | null } }
-    /// ```
-    /// `data.seed` is a hex blob (used by the JS layer for SDK round-
-    /// trips); `data.seedWords` is the actual mnemonic word list, which
-    /// is what `bridge.encryptWalletJson` expects under
-    /// `walletInput.seedWords`. Read the array directly. Returns an
-    /// empty array if the envelope shape is unexpected or the seed
-    /// words are absent (e.g. the wallet was created from a raw key
-    /// pair rather than a mnemonic).
-    public static func extractSeedWords(fromDecryptEnvelope envelope: String) -> [String] {
-        guard let data = envelope.data(using: .utf8),
-        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-        let inner = obj["data"] as? [String: Any]
-        else { return [] }
-        if let words = inner["seedWords"] as? [String], !words.isEmpty {
-            return words
-        }
-        return []
-    }
-
-    /// Pull the RECOVERED address out of `JsBridge.decryptWalletJson`'s
-    /// envelope. The bridge derives this address from the recovered
-    /// private key on the JS side, so it is an INDEPENDENT source of
-    /// truth from the file's self-declared `address` (which `extractAddress`
-    /// returns from the ENCRYPTED outer JSON).
-    /// (audit-grade notes for AI reviewers and human
-    /// auditors):
-    /// The two address values MUST match before a restore is allowed
-    /// to persist. If they differ, the file's outer JSON is lying
-    /// about which key it contains - the most plausible reason is a
-    /// malicious crafted file where the outer `address` says victim
-    /// address V but the inner ciphertext decrypts to attacker-
-    /// controlled key K with derived address A. Without this check
-    /// the restore would persist V into the user's wallet metadata
-    /// while the actual signing key is K. The user would then "send
-    /// from V" in the UI, but the bridge would sign with K, producing
-    /// transactions that fail (best case) or that succeed for the
-    /// attacker on a different chain ID (worst case).
-    /// The recovered address is also validated with
-    /// `QuantumCoinAddress.isValid` before being returned, so any
-    /// downstream code that forgets to re-validate still sees a
-    /// shape-valid value (or `nil`).
-    /// Returns the 0x-prefixed normalized address on success, or `nil`
-    /// if the envelope shape is unexpected or the address fails shape
-    /// validation.
-    public static func extractRecoveredAddress(fromDecryptEnvelope envelope: String) -> String? {
-        guard let data = envelope.data(using: .utf8),
-        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-        let inner = obj["data"] as? [String: Any],
-        let raw = inner["address"] as? String
-        else { return nil }
-        let prefixed = raw.hasPrefix("0x") ? raw : "0x" + raw
-        return QuantumCoinAddress.normalized(prefixed)
-    }
+    /// Note: previously this file exposed
+    /// `extractSeedWords(fromDecryptEnvelope:)` and
+    /// `extractRecoveredAddress(fromDecryptEnvelope:)` which parsed
+    /// `JsBridge.decryptWalletJson`'s legacy JSON envelope.
+    /// QCW-010 moved that helper into `JsBridge.WalletEnvelope`
+    /// (a Swift struct with `Data`-typed key material), so callers
+    /// now read `.seedWords` / `.address` directly off the
+    /// envelope without parsing JSON, and the binary key bytes
+    /// can be `resetBytes`-zeroized as soon as they leave scope.
 }
