@@ -1,16 +1,12 @@
-//
 // HomeMainViewController.swift
-//
 // Port of `HomeMainFragment.java` / `home_main_fragment.xml`. Token
 // list with pagination, horizontally scrollable column layout
 // (symbol | balance | name | contract | decimals) with a sticky
 // header. Contract column is tappable and opens the active block
 // explorer's account-details page for that contract address.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/HomeMainFragment.java
-//   app/src/main/res/layout/home_main_fragment.xml
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/HomeMainFragment.java
+// app/src/main/res/layout/home_main_fragment.xml
 
 import UIKit
 
@@ -25,22 +21,22 @@ private enum TokenColumn: CaseIterable {
 
     var width: CGFloat {
         switch self {
-        case .symbol:   return 60
-        // Wider so 18-decimal balances ("1.234567890123456789") are
-        // not truncated mid-digit.
-        case .balance:  return 200
-        case .name:     return 160
-        case .contract: return 320
+            case .symbol: return 60
+            // Wider so 18-decimal balances ("1.234567890123456789") are
+            // not truncated mid-digit.
+            case .balance: return 200
+            case .name: return 160
+            case .contract: return 320
         }
     }
 
     var title: String {
         let L = Localization.shared
         switch self {
-        case .symbol:   return L.getSymbolByLangValues()
-        case .balance:  return L.getBalanceByLangValues()
-        case .name:     return L.getNameByLangValues()
-        case .contract: return L.getContractByLangValues()
+            case .symbol: return L.getSymbolByLangValues()
+            case .balance: return L.getBalanceByLangValues()
+            case .name: return L.getNameByLangValues()
+            case .contract: return L.getContractByLangValues()
         }
     }
 
@@ -51,9 +47,9 @@ private enum TokenColumn: CaseIterable {
 }
 
 public final class HomeMainViewController: UIViewController,
-                                           HomeScreenViewTypeProviding,
-                                           UITableViewDataSource,
-                                           UITableViewDelegate {
+HomeScreenViewTypeProviding,
+UITableViewDataSource,
+UITableViewDelegate {
 
     public var screenViewType: ScreenViewType { .mainHome }
 
@@ -64,8 +60,8 @@ public final class HomeMainViewController: UIViewController,
     /// extra `count - 1` pts to keep the trailing card border flush
     /// with the last column edge.
     fileprivate static let totalColumnsWidth: CGFloat = TokenColumn.allCases
-        .reduce(0) { $0 + $1.width }
-        + CGFloat(max(TokenColumn.allCases.count - 1, 0))
+    .reduce(0) { $0 + $1.width }
+    + CGFloat(max(TokenColumn.allCases.count - 1, 0))
     private static let headerHeight: CGFloat = 36
     /// Margin around the rounded `card` chrome so the corner radius
     /// is visible on every edge instead of being clipped against the
@@ -130,7 +126,7 @@ public final class HomeMainViewController: UIViewController,
         card.layer.cornerRadius = 12
         card.layer.borderWidth = 1
         card.layer.borderColor = (UIColor(named: "colorCommon6") ?? .label)
-            .withAlphaComponent(0.3).cgColor
+        .withAlphaComponent(0.3).cgColor
         card.layer.masksToBounds = true
         horizontalScrollView.addSubview(card)
 
@@ -164,67 +160,67 @@ public final class HomeMainViewController: UIViewController,
         view.addSubview(scrollIndicator)
 
         NSLayoutConstraint.activate([
-            // Horizontal scroller is inset on bottom + leading +
-            // trailing by `cardInset` so the rounded card border is
-            // visible on every edge. Top stays flush with `view` so
-            // the strip directly above the card meets the card edge
-            // without a visual gap. The trailing inset also doubles
-            // as the gutter for the custom vertical scroll indicator.
-            horizontalScrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            horizontalScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -Self.cardInset),
-            horizontalScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.cardInset),
-            horizontalScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Self.cardInset),
+                // Horizontal scroller is inset on bottom + leading +
+                // trailing by `cardInset` so the rounded card border is
+                // visible on every edge. Top stays flush with `view` so
+                // the strip directly above the card meets the card edge
+                // without a visual gap. The trailing inset also doubles
+                // as the gutter for the custom vertical scroll indicator.
+                horizontalScrollView.topAnchor.constraint(equalTo: view.topAnchor),
+                horizontalScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -Self.cardInset),
+                horizontalScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.cardInset),
+                horizontalScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Self.cardInset),
 
-            // Card spans the scroll view's content width and hugs
-            // the natural stack height (`headerHeight` +
-            // `table.contentSize.height`, see `tableHeight` +
-            // `tableContentObs`) so a short token list shrinks the
-            // chrome instead of leaving an empty rounded box. The
-            // `lessThanOrEqualTo` cap kicks in only when the list
-            // overflows the available area, at which point the
-            // `.defaultHigh` `tableHeight` constraint breaks and
-            // the table fills the cap.
-            card.topAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.topAnchor),
-            card.bottomAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.bottomAnchor),
-            card.leadingAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.leadingAnchor),
-            card.trailingAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.trailingAnchor),
-            card.heightAnchor.constraint(lessThanOrEqualTo: horizontalScrollView.frameLayoutGuide.heightAnchor),
+                // Card spans the scroll view's content width and hugs
+                // the natural stack height (`headerHeight` +
+                // `table.contentSize.height`, see `tableHeight` +
+                // `tableContentObs`) so a short token list shrinks the
+                // chrome instead of leaving an empty rounded box. The
+                // `lessThanOrEqualTo` cap kicks in only when the list
+                // overflows the available area, at which point the
+                // `.defaultHigh` `tableHeight` constraint breaks and
+                // the table fills the cap.
+                card.topAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.topAnchor),
+                card.bottomAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.bottomAnchor),
+                card.leadingAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.leadingAnchor),
+                card.trailingAnchor.constraint(equalTo: horizontalScrollView.contentLayoutGuide.trailingAnchor),
+                card.heightAnchor.constraint(lessThanOrEqualTo: horizontalScrollView.frameLayoutGuide.heightAnchor),
 
-            // Column container has fixed width = sum of all columns
-            // + inter-column separators (drives `contentSize.width`)
-            // and pins to the card's edges so the inner header /
-            // table sit flush inside the rounded shell.
-            columnContainer.topAnchor.constraint(equalTo: card.topAnchor),
-            columnContainer.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            columnContainer.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            columnContainer.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            columnContainer.widthAnchor.constraint(equalToConstant: Self.totalColumnsWidth),
+                // Column container has fixed width = sum of all columns
+                // + inter-column separators (drives `contentSize.width`)
+                // and pins to the card's edges so the inner header /
+                // table sit flush inside the rounded shell.
+                columnContainer.topAnchor.constraint(equalTo: card.topAnchor),
+                columnContainer.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+                columnContainer.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+                columnContainer.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+                columnContainer.widthAnchor.constraint(equalToConstant: Self.totalColumnsWidth),
 
-            headerView.topAnchor.constraint(equalTo: columnContainer.topAnchor),
-            headerView.leadingAnchor.constraint(equalTo: columnContainer.leadingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: columnContainer.trailingAnchor),
-            headerView.heightAnchor.constraint(equalToConstant: Self.headerHeight),
+                headerView.topAnchor.constraint(equalTo: columnContainer.topAnchor),
+                headerView.leadingAnchor.constraint(equalTo: columnContainer.leadingAnchor),
+                headerView.trailingAnchor.constraint(equalTo: columnContainer.trailingAnchor),
+                headerView.heightAnchor.constraint(equalToConstant: Self.headerHeight),
 
-            table.topAnchor.constraint(equalTo: headerView.bottomAnchor),
-            table.bottomAnchor.constraint(equalTo: columnContainer.bottomAnchor),
-            table.leadingAnchor.constraint(equalTo: columnContainer.leadingAnchor),
-            table.trailingAnchor.constraint(equalTo: columnContainer.trailingAnchor),
+                table.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+                table.bottomAnchor.constraint(equalTo: columnContainer.bottomAnchor),
+                table.leadingAnchor.constraint(equalTo: columnContainer.leadingAnchor),
+                table.trailingAnchor.constraint(equalTo: columnContainer.trailingAnchor),
 
-            // Vertical thumb sits inside the right gutter (the
-            // 16pt strip between the card's trailing edge and the
-            // screen edge), 4pt from the screen edge so it remains
-            // an obvious tappable / readable thumb without
-            // overlapping the rounded card border. Top/bottom
-            // track the CARD bounds (not the scroll-view frame)
-            // so the indicator track shrinks together with the
-            // card when the token list is short - otherwise the
-            // track would extend into the empty area below the
-            // hugged card and render a stray thumb segment there.
-            scrollIndicator.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.headerHeight),
-            scrollIndicator.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            scrollIndicator.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
-            scrollIndicator.widthAnchor.constraint(equalToConstant: 6)
-        ])
+                // Vertical thumb sits inside the right gutter (the
+                // 16pt strip between the card's trailing edge and the
+                // screen edge), 4pt from the screen edge so it remains
+                // an obvious tappable / readable thumb without
+                // overlapping the rounded card border. Top/bottom
+                // track the CARD bounds (not the scroll-view frame)
+                // so the indicator track shrinks together with the
+                // card when the token list is short - otherwise the
+                // track would extend into the empty area below the
+                // hugged card and render a stray thumb segment there.
+                scrollIndicator.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.headerHeight),
+                scrollIndicator.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+                scrollIndicator.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -4),
+                scrollIndicator.widthAnchor.constraint(equalToConstant: 6)
+            ])
         scrollIndicator.attach(to: table)
         table.register(TokenCell.self, forCellReuseIdentifier: "token")
 
@@ -266,7 +262,7 @@ public final class HomeMainViewController: UIViewController,
         // just a column-header row sitting on the home screen
         // reads as a broken UI. The success path of `loadNextPage`
         // and `handleNetworkConfigDidChange` re-evaluate via
-        // `applyEmptyState()`.
+        // `applyEmptyState`.
         applyEmptyState()
         loadNextPage()
     }
@@ -326,7 +322,7 @@ public final class HomeMainViewController: UIViewController,
     private func resolveCurrentAddress() -> String {
         let idx = PrefConnect.shared.readInt(
             PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, default: 0)
-        return KeyStore.shared.address(forIndex: idx) ?? ""
+        return Strongbox.shared.address(forIndex: idx) ?? ""
     }
 
     // MARK: - Header
@@ -361,15 +357,15 @@ public final class HomeMainViewController: UIViewController,
         headerView.addSubview(stack)
         headerView.addSubview(rule)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: headerView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: rule.topAnchor),
-            rule.heightAnchor.constraint(equalToConstant: 1),
-            rule.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
-            rule.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
-            rule.trailingAnchor.constraint(equalTo: headerView.trailingAnchor)
-        ])
+                stack.topAnchor.constraint(equalTo: headerView.topAnchor),
+                stack.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
+                stack.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
+                stack.bottomAnchor.constraint(equalTo: rule.topAnchor),
+                rule.heightAnchor.constraint(equalToConstant: 1),
+                rule.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+                rule.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
+                rule.trailingAnchor.constraint(equalTo: headerView.trailingAnchor)
+            ])
     }
 
     /// Single header column: a fixed-width container around a label,
@@ -436,7 +432,7 @@ private final class TokenCell: UITableViewCell {
         // surfaces deep-link to the explorer's account page for the
         // currently configured `contractAddress`.
         symbolButton.addTarget(self, action: #selector(tapContract),
-                               for: .touchUpInside)
+            for: .touchUpInside)
 
         balanceLabel.font = Typography.body(14)
         balanceLabel.textAlignment = .left
@@ -457,12 +453,12 @@ private final class TokenCell: UITableViewCell {
         contractButton.setTitleColor(
             UIColor(named: "colorPrimary") ?? .systemBlue, for: .normal)
         contractButton.addTarget(self, action: #selector(tapContract),
-                                 for: .touchUpInside)
+            for: .touchUpInside)
 
         let wrapped: [UIView] = [
-            Self.wrapColumn(symbolButton,   width: TokenColumn.symbol.width,   verticalInset: 8),
-            Self.wrapColumn(balanceLabel,   width: TokenColumn.balance.width,  verticalInset: 8),
-            Self.wrapColumn(nameLabel,      width: TokenColumn.name.width,     verticalInset: 8),
+            Self.wrapColumn(symbolButton, width: TokenColumn.symbol.width, verticalInset: 8),
+            Self.wrapColumn(balanceLabel, width: TokenColumn.balance.width, verticalInset: 8),
+            Self.wrapColumn(nameLabel, width: TokenColumn.name.width, verticalInset: 8),
             Self.wrapColumn(contractButton, width: TokenColumn.contract.width, verticalInset: 8)
         ]
         let row = UIStackView()
@@ -487,11 +483,11 @@ private final class TokenCell: UITableViewCell {
         row.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(row)
         NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: contentView.topAnchor),
-            row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor)
-        ])
+                row.topAnchor.constraint(equalTo: contentView.topAnchor),
+                row.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+                row.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+                row.trailingAnchor.constraint(equalTo: contentView.trailingAnchor)
+            ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -505,7 +501,7 @@ private final class TokenCell: UITableViewCell {
     /// row separator the system `UIColor.separator`) and the
     /// mismatched colors are what made the dividers look disjoint.
     static let dividerColor: UIColor =
-        (UIColor(named: "colorCommon6") ?? .label).withAlphaComponent(0.15)
+    (UIColor(named: "colorCommon6") ?? .label).withAlphaComponent(0.15)
 
     /// 1pt vertical column divider, shared by the sticky header
     /// and every reused `TokenCell` so the header dividers line up
@@ -527,7 +523,6 @@ private final class TokenCell: UITableViewCell {
     /// to the column's design width with a small visual gap on
     /// either side. Exposed `static` because the header builds
     /// wrappers independently of any row instance.
-    ///
     /// `verticalInset` lets cell call sites carve out the 8pt
     /// breathing room around labels INSIDE the wrapper (so the
     /// wrapper itself - and therefore the sibling column-separator
@@ -536,18 +531,18 @@ private final class TokenCell: UITableViewCell {
     /// because the 36pt fixed header height already supplies
     /// enough margin around the 13pt header label.
     static func wrapColumn(_ subview: UIView,
-                           width: CGFloat,
-                           verticalInset: CGFloat = 0) -> UIView {
+        width: CGFloat,
+        verticalInset: CGFloat = 0) -> UIView {
         let container = UIView()
         subview.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(subview)
         container.widthAnchor.constraint(equalToConstant: width).isActive = true
         NSLayoutConstraint.activate([
-            subview.topAnchor.constraint(equalTo: container.topAnchor, constant: verticalInset),
-            subview.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -verticalInset),
-            subview.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
-            subview.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6)
-        ])
+                subview.topAnchor.constraint(equalTo: container.topAnchor, constant: verticalInset),
+                subview.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -verticalInset),
+                subview.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
+                subview.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6)
+            ])
         return container
     }
 
@@ -567,18 +562,22 @@ private final class TokenCell: UITableViewCell {
 
     @objc private func tapContract() {
         guard !contractAddress.isEmpty else { return }
-        // Mirror `HomeViewController.resolveBlockExplorerBase()`:
+        // Mirror `HomeViewController.resolveBlockExplorerBase`:
         // prefer the global URL set when a network was activated,
         // fall back to the active network's `blockExplorerUrl` so the
         // link still works before the first explicit network switch.
         let primary = Constants.BLOCK_EXPLORER_URL
         let base = primary.isEmpty
-            ? (BlockchainNetworkManager.shared.active?.blockExplorerUrl ?? "")
-            : primary
+        ? (BlockchainNetworkManager.shared.active?.blockExplorerUrl ?? "")
+        : primary
         guard !base.isEmpty else { return }
-        let path = Constants.BLOCK_EXPLORER_ACCOUNT_TRANSACTION_URL
-            .replacingOccurrences(of: "{address}", with: contractAddress)
-        if let url = URL(string: base + path) {
+        // Token contractAddress flows in from the
+        // scan-API JSON. If the user has added a hostile network,
+        // the contract address can be attacker-controlled. The
+        // validated wrapper rejects any non-QuantumCoinAddress-shaped
+        // value before the tap reaches Safari.
+        if let url = UrlBuilder.blockExplorerAccountUrl(
+            base: base, address: contractAddress) {
             UIApplication.shared.open(url)
         }
     }
@@ -619,7 +618,7 @@ public final class VerticalScrollIndicatorView: UIView {
         // affordance at the very moment there's nothing to scroll
         // (e.g. when the token table has hugged its content).
         guard let sv = target,
-              sv.contentSize.height > sv.bounds.height else {
+        sv.contentSize.height > sv.bounds.height else {
             thumb.frame = .zero; return
         }
         let viewport = max(sv.bounds.height, 1)

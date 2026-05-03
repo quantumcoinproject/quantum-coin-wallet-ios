@@ -1,37 +1,33 @@
-//
 // WalletsViewController.swift
-//
 // Port of `WalletsFragment.java` / `wallet_fragment.xml`. Renders a
 // titled, rounded 4-column table (Address | QuantumScan | Backup |
 // Reveal Seed) with white-glyph icon tiles inside coloured rounded
 // backgrounds, plus a centred "Create or Restore Quantum Wallet" link
 // below the card. A back arrow at the top returns to the main screen,
 // matching `HomeActivity.onBackPressed` for `WalletsFragment`.
-//
 // Android references:
-//   app/src/main/res/layout/wallet_fragment.xml
-//   app/src/main/res/layout/wallet_header.xml
-//   app/src/main/res/layout/wallet_adapter.xml
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/WalletsFragment.java
-//   app/src/main/java/com/quantumcoinwallet/app/view/adapter/WalletAdapter.java
-//
+// app/src/main/res/layout/wallet_fragment.xml
+// app/src/main/res/layout/wallet_header.xml
+// app/src/main/res/layout/wallet_adapter.xml
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/WalletsFragment.java
+// app/src/main/java/com/quantumcoinwallet/app/view/adapter/WalletAdapter.java
 
 import UIKit
 
 public final class WalletsViewController: UIViewController,
-                                          HomeScreenViewTypeProviding {
+HomeScreenViewTypeProviding {
 
     public var screenViewType: ScreenViewType { .innerFragment }
 
     // Android tile colours from `wallet_adapter.xml` (cardBackgroundColor):
-    //   explore: #FF396F, backup: #3B82F6, reveal: #FF00DB.
+    // explore: #FF396F, backup: #3B82F6, reveal: #FF00DB.
     private static let exploreTileColor = UIColor(red: 1.0, green: 0x39/255.0, blue: 0x6F/255.0, alpha: 1.0)
-    private static let backupTileColor  = UIColor(red: 0x3B/255.0, green: 0x82/255.0, blue: 0xF6/255.0, alpha: 1.0)
-    private static let revealTileColor  = UIColor(red: 1.0, green: 0x00, blue: 0xDB/255.0, alpha: 1.0)
+    private static let backupTileColor = UIColor(red: 0x3B/255.0, green: 0x82/255.0, blue: 0xF6/255.0, alpha: 1.0)
+    private static let revealTileColor = UIColor(red: 1.0, green: 0x00, blue: 0xDB/255.0, alpha: 1.0)
 
     private let scroll = UIScrollView()
     private let contentStack = UIStackView()
-    private let tableStack = UIStackView()    // header + horizontal-rule + per-wallet rows
+    private let tableStack = UIStackView() // header + horizontal-rule + per-wallet rows
     /// Pairs of `(walletSlotIndex, address)` ordered by ascending
     /// slot index. Holding the slot index alongside the address means
     /// `revealWallet(index:)` / `backupWallet(index:)` / etc. address
@@ -52,16 +48,16 @@ public final class WalletsViewController: UIViewController,
         view.addSubview(scroll)
 
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            contentStack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
-            contentStack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -20),
-            contentStack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
-            contentStack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
-            contentStack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32)
-        ])
+                scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+                contentStack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 12),
+                contentStack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -20),
+                contentStack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
+                contentStack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
+                contentStack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32)
+            ])
 
         contentStack.addArrangedSubview(buildBackRow())
         contentStack.addArrangedSubview(buildTitleLabel())
@@ -71,7 +67,7 @@ public final class WalletsViewController: UIViewController,
         reload()
 
         // Apply uniform press feedback once the static surfaces are
-        // installed. `rebuildTableRows()` re-applies it after each
+        // installed. `rebuildTableRows` re-applies it after each
         // dynamic refresh so freshly-built row tiles also dim on tap.
         view.installPressFeedbackRecursive()
     }
@@ -80,8 +76,8 @@ public final class WalletsViewController: UIViewController,
         super.viewWillAppear(animated)
         // Re-read on every appearance so wallets that were created /
         // restored while we were on another screen show up immediately,
-        // mirroring `WalletsFragment.onResume`. The KeyStore map is
-        // populated post-unlock (or post-recordNewWallet during the
+        // mirroring `WalletsFragment.onResume`. The Strongbox map
+        // is populated post-unlock (or post-appendWallet during the
         // create / restore flow), so this view is always up-to-date by
         // the time it is shown.
         reload()
@@ -90,12 +86,12 @@ public final class WalletsViewController: UIViewController,
     // MARK: - Reload
 
     private func reload() {
-        // KeyStore is now the single source of truth for the address
-        // map. While the vault is locked the map is empty and this
-        // table renders nothing - the cold-launch gate / re-lock
-        // dialog covers the screen anyway, so an empty list is never
-        // user-visible.
-        let map = KeyStore.shared.indexToAddress
+        // `Strongbox.shared` is the single source of truth for the
+        // address map. While the strongbox is locked the map is
+        // empty and this table renders nothing - the cold-launch
+        // gate / re-lock dialog covers the screen anyway, so an
+        // empty list is never user-visible.
+        let map = Strongbox.shared.indexToAddress
         rows = map.keys.sorted().compactMap { idx in
             guard let addr = map[idx] else { return nil }
             return (idx, addr)
@@ -119,7 +115,7 @@ public final class WalletsViewController: UIViewController,
         // instead of the project's standard primary-icon colour.
         let back = UIButton(type: .custom)
         let img = UIImage(named: "arrow_back_circle_outline")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         back.setImage(img, for: .normal)
         back.tintColor = UIColor(named: "colorCommon6") ?? .label
         back.imageView?.contentMode = .scaleAspectFit
@@ -127,9 +123,9 @@ public final class WalletsViewController: UIViewController,
         back.translatesAutoresizingMaskIntoConstraints = false
         back.widthAnchor.constraint(equalToConstant: 36).isActive = true
         back.heightAnchor.constraint(equalToConstant: 36).isActive = true
-        back.addAction(UIAction { [weak self] _ in
-            (self?.parent as? HomeViewController)?.showMain()
-        }, for: .touchUpInside)
+        back.addAction(UIAction(handler: { [weak self] _ in
+                (self?.parent as? HomeViewController)?.showMain()
+            }), for: .touchUpInside)
 
         row.addArrangedSubview(back)
         row.addArrangedSubview(UIView())
@@ -166,13 +162,13 @@ public final class WalletsViewController: UIViewController,
         tableStack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(tableStack)
         NSLayoutConstraint.activate([
-            tableStack.topAnchor.constraint(equalTo: card.topAnchor),
-            tableStack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            tableStack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            tableStack.trailingAnchor.constraint(equalTo: card.trailingAnchor)
-        ])
+                tableStack.topAnchor.constraint(equalTo: card.topAnchor),
+                tableStack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+                tableStack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+                tableStack.trailingAnchor.constraint(equalTo: card.trailingAnchor)
+            ])
         // Initial population happens once `addresses` is loaded via
-        // `reload()`. Until then, render just the header + bottom rule.
+        // `reload`. Until then, render just the header + bottom rule.
         tableStack.addArrangedSubview(buildHeaderRow())
         tableStack.addArrangedSubview(buildHorizontalRule())
         return card
@@ -285,8 +281,12 @@ public final class WalletsViewController: UIViewController,
             padding: 9,
             tap: { [weak self] in self?.revealWallet(index: index) }
         )
-        let hasSeed = PrefConnect.shared.readBool(
-            "\(PrefKeys.WALLET_HAS_SEED_KEY_PREFIX)\(index)", default: true)
+        // The has-seed bit lives on the encrypted wallet record
+        // (`StrongboxPayload.Wallet.hasSeed`); pre-unlock the
+        // snapshot is empty so we default to `true` and let the
+        // strongbox refresh post-unlock hide the reveal tile if
+        // the wallet was imported as a private-key-only backup.
+        let hasSeed = Strongbox.shared.wallet(at: index)?.hasSeed ?? true
         revealTile.isHidden = !hasSeed
         let revealCell = makeColumnContainer(content: revealTile)
 
@@ -311,11 +311,11 @@ public final class WalletsViewController: UIViewController,
         content.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(content)
         NSLayoutConstraint.activate([
-            content.centerXAnchor.constraint(equalTo: host.centerXAnchor),
-            content.centerYAnchor.constraint(equalTo: host.centerYAnchor),
-            content.leadingAnchor.constraint(greaterThanOrEqualTo: host.leadingAnchor, constant: 4),
-            content.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor, constant: -4)
-        ])
+                content.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+                content.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+                content.leadingAnchor.constraint(greaterThanOrEqualTo: host.leadingAnchor, constant: 4),
+                content.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor, constant: -4)
+            ])
         return host
     }
 
@@ -326,9 +326,9 @@ public final class WalletsViewController: UIViewController,
         b.setTitleColor(UIColor(named: "colorCommonSeedA") ?? UIColor.systemBlue, for: .normal)
         b.titleLabel?.lineBreakMode = .byTruncatingMiddle
         b.titleLabel?.numberOfLines = 1
-        b.addAction(UIAction { [weak self] _ in
-            self?.switchActive(toIndex: index)
-        }, for: .touchUpInside)
+        b.addAction(UIAction(handler: { [weak self] _ in
+                self?.switchActive(toIndex: index)
+            }), for: .touchUpInside)
         return b
     }
 
@@ -344,9 +344,9 @@ public final class WalletsViewController: UIViewController,
     /// 35x35 rounded coloured tile with a centred white-tinted glyph.
     /// Mirrors the `CardView` blocks in `wallet_adapter.xml`.
     private func makeIconTile(backgroundColor: UIColor,
-                              image: UIImage?,
-                              padding: CGFloat,
-                              tap: @escaping () -> Void) -> UIControl {
+        image: UIImage?,
+        padding: CGFloat,
+        tap: @escaping () -> Void) -> UIControl {
         let tile = UIControl()
         tile.translatesAutoresizingMaskIntoConstraints = false
         tile.backgroundColor = backgroundColor
@@ -365,12 +365,12 @@ public final class WalletsViewController: UIViewController,
         imgView.translatesAutoresizingMaskIntoConstraints = false
         tile.addSubview(imgView)
         NSLayoutConstraint.activate([
-            imgView.topAnchor.constraint(equalTo: tile.topAnchor, constant: padding),
-            imgView.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -padding),
-            imgView.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: padding),
-            imgView.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -padding)
-        ])
-        tile.addAction(UIAction { _ in tap() }, for: .touchUpInside)
+                imgView.topAnchor.constraint(equalTo: tile.topAnchor, constant: padding),
+                imgView.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -padding),
+                imgView.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: padding),
+                imgView.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -padding)
+            ])
+        tile.addAction(UIAction(handler: { _ in tap() }), for: .touchUpInside)
         return tile
     }
 
@@ -397,17 +397,17 @@ public final class WalletsViewController: UIViewController,
         b.titleLabel?.font = Typography.mediumLabel(16)
         b.setTitleColor(UIColor(named: "colorCommonSeedA") ?? UIColor.systemBlue, for: .normal)
         b.translatesAutoresizingMaskIntoConstraints = false
-        b.addAction(UIAction { [weak self] _ in
-            (self?.parent as? HomeViewController)?.showCreateOrRestore()
-        }, for: .touchUpInside)
+        b.addAction(UIAction(handler: { [weak self] _ in
+                (self?.parent as? HomeViewController)?.showCreateOrRestore()
+            }), for: .touchUpInside)
         host.addSubview(b)
         NSLayoutConstraint.activate([
-            b.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
-            b.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -4),
-            b.centerXAnchor.constraint(equalTo: host.centerXAnchor),
-            b.leadingAnchor.constraint(greaterThanOrEqualTo: host.leadingAnchor),
-            b.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor)
-        ])
+                b.topAnchor.constraint(equalTo: host.topAnchor, constant: 8),
+                b.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -4),
+                b.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+                b.leadingAnchor.constraint(greaterThanOrEqualTo: host.leadingAnchor),
+                b.trailingAnchor.constraint(lessThanOrEqualTo: host.trailingAnchor)
+            ])
         return host
     }
 
@@ -421,24 +421,26 @@ public final class WalletsViewController: UIViewController,
     private func openBlockExplorer(for address: String) {
         let primary = Constants.BLOCK_EXPLORER_URL
         let base = primary.isEmpty
-            ? (BlockchainNetworkManager.shared.active?.blockExplorerUrl ?? "")
-            : primary
+        ? (BlockchainNetworkManager.shared.active?.blockExplorerUrl ?? "")
+        : primary
         guard !base.isEmpty else {
             Toast.showError(Localization.shared.getNoActiveNetworkByLangValues())
             return
         }
-        let url = base + Constants.BLOCK_EXPLORER_ACCOUNT_TRANSACTION_URL
-            .replacingOccurrences(of: "{address}", with: address)
-        if let u = URL(string: url) { UIApplication.shared.open(u) }
+        // Validated URL composition.
+        if let u = UrlBuilder.blockExplorerAccountUrl(
+            base: base, address: address) {
+            UIApplication.shared.open(u)
+        }
     }
 
-    /// Reveal flow runs `KeyStore.unlock` (scrypt) followed by
-    /// `JsBridge.decryptWalletJson` (a second scrypt round inside the
+    /// Reveal flow runs `unlockWithPasswordAndApplySession` (scrypt)
+    /// followed by `JsBridge.decryptWalletJson` (a second scrypt round inside the
     /// JS bridge). Both can take a few seconds, so a
     /// `WaitDialogViewController` is presented over the unlock dialog
     /// while the work runs - mirroring the pattern used by
     /// `BackupOptionsViewController.runBackupFlow` and
-    /// `HomeWalletViewController.presentUnlockThen`. Wrong vault
+    /// `HomeWalletViewController.presentUnlockThen`. Wrong strongbox
     /// password leaves the unlock dialog up with the standard inline
     /// error + cleared field UX.
     private func revealWallet(index: Int) {
@@ -453,11 +455,12 @@ public final class WalletsViewController: UIViewController,
                 message: Localization.shared.getWaitWalletOpenByLangValues())
             dlg.present(wait, animated: true)
             Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
-                var result: Result<String, Error> = .failure(KeyStoreError.decodeFailed)
+                var result: Result<String, Error> = .failure(UnlockCoordinatorV2Error.decodeFailed)
                 do {
-                    try KeyStore.shared.unlock(password: pw)
-                    let encrypted = try KeyStore.shared.readWallet(
-                        index: index, password: pw)
+                    try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(pw)
+                    guard let encrypted = Strongbox.shared.encryptedSeed(at: index) else {
+                        throw UnlockCoordinatorV2Error.decodeFailed
+                    }
                     let decEnv = try JsBridge.shared.decryptWalletJson(
                         walletJson: encrypted, password: pw)
                     result = .success(decEnv)
@@ -468,18 +471,30 @@ public final class WalletsViewController: UIViewController,
                 await MainActor.run {
                     wait?.dismiss(animated: true) {
                         switch final {
-                        case .success(let decEnv):
+                            case .success(let decEnv):
                             dlg?.dismiss(animated: true) {
                                 (self?.parent as? HomeViewController)?
-                                    .beginTransactionNow(RevealWalletViewController(decryptedEnvelope: decEnv))
+                                .beginTransactionNow(RevealWalletViewController(decryptedEnvelope: decEnv))
                             }
-                        case .failure:
+                            case .failure(let err):
                             // Wrong-password branch: orange OK alert
                             // layered on top of the unlock dialog;
                             // typed password preserved (no
-                            // `clearField()`).
-                            dlg?.showOrangeError(
-                                Localization.shared.getWalletPasswordMismatchByErrors())
+                            // `clearField`).
+                            // Distinguish brute-
+                            // force lockout from regular wrong-
+                            // password so the user knows the gate
+                            // is throttling them by design.
+                            if let uc = err as? UnlockCoordinatorV2Error,
+                            case let .tooManyAttempts(seconds) = uc {
+                                dlg?.showOrangeError(
+                                    UnlockAttemptLimiter
+                                    .userFacingLockoutMessage(
+                                        remainingSeconds: seconds))
+                            } else {
+                                dlg?.showOrangeError(
+                                    Localization.shared.getWalletPasswordMismatchByErrors())
+                            }
                         }
                     }
                 }

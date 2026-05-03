@@ -1,14 +1,10 @@
-//
 // ShapeFactory.swift
-//
 // Programmatic equivalents of Android ShapeDrawables and selected
 // LayerDrawables. See `ios_clone_spec` §3.4 for the full mapping
 // strategy - this file covers the four shapes used most often across
 // the screen layouts.
-//
 // Android reference:
-//   app/src/main/res/drawable/*.xml
-//
+// app/src/main/res/drawable/*.xml
 
 import UIKit
 
@@ -17,7 +13,7 @@ public enum ShapeFactory {
     /// Rounded-rect filled view, analogous to
     /// `<shape android:shape="rectangle">` with `<corners>` + `<solid>`.
     public static func roundedRect(fill: UIColor, cornerRadius: CGFloat,
-                                   stroke: UIColor? = nil, strokeWidth: CGFloat = 0) -> UIView {
+        stroke: UIColor? = nil, strokeWidth: CGFloat = 0) -> UIView {
         let v = UIView()
         v.backgroundColor = fill
         v.layer.cornerRadius = cornerRadius
@@ -32,7 +28,7 @@ public enum ShapeFactory {
     /// Gradient banner used by `drawable-v24/gradient_layer.xml`.
     /// Caller installs this on a `UIView`'s layer hierarchy.
     public static func gradientLayer(topLeftColor: UIColor, topRightColor: UIColor,
-                                     bottomLeftColor: UIColor, bottomRightColor: UIColor) -> CAGradientLayer {
+        bottomLeftColor: UIColor, bottomRightColor: UIColor) -> CAGradientLayer {
         let layer = CAGradientLayer()
         layer.colors = [
             topLeftColor.cgColor,
@@ -61,7 +57,7 @@ public enum ShapeFactory {
     /// Sweep-gradient indeterminate spinner used by Android's
     /// `drawable/progress.xml`. Returns a UIView that auto-rotates.
     public static func progressRing(color: UIColor, lineWidth: CGFloat = 3,
-                                    diameter: CGFloat) -> UIView {
+        diameter: CGFloat) -> UIView {
         let v = UIView(frame: CGRect(x: 0, y: 0, width: diameter, height: diameter))
         let layer = CAShapeLayer()
         let path = UIBezierPath(ovalIn: v.bounds.insetBy(dx: lineWidth/2, dy: lineWidth/2))

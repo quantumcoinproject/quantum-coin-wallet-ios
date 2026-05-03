@@ -1,29 +1,20 @@
-//
 // TransactionSentDialogViewController.swift
-//
 // Confirmation dialog shown after a successful Send. Replaces the old
 // `Toast.showMessage("Sent")` so the user can clearly see the
 // transaction id and quickly jump to the explorer or copy the hash to
 // the clipboard.
-//
 // Layout mirrors the Android post-send confirmation:
-//
-//   "Your transaction request has been sent."
-//
-//   Transaction ID
-//   <txhash mono, 2 lines, byTruncatingMiddle>     [copy]  [explorer]
-//
-//                                                          [ OK ]
-//
+// "Your transaction request has been sent."
+// Transaction ID
+// <txhash mono, 2 lines, byTruncatingMiddle> [copy] [explorer]
+// [ OK ]
 // Copy button uses the same `copy_outline` template + black "Copied"
 // toast feedback that the home-screen address row already uses
 // (parity with `WalletsViewController.copy` and the seed-show row).
-//
 // The block-explorer button opens
 // `Constants.BLOCK_EXPLORER_URL + Constants.BLOCK_EXPLORER_TX_HASH_URL.replace({txhash})`,
 // matching the same link pattern the Transactions table uses for its
 // row taps.
-//
 
 import UIKit
 
@@ -67,17 +58,21 @@ public final class TransactionSentDialogViewController: ModalDialogViewControlle
         let copyButton = makeChromeIconButton(
             named: "copy_outline",
             accessibility: L.getCopyByLangValues()) { [weak self] in
-                guard let self = self, !self.txHash.isEmpty else { return }
-                UIPasteboard.general.string = self.txHash
-                Toast.showMessage(L.getCopiedByLangValues())
-            }
+            guard let self = self, !self.txHash.isEmpty else { return }
+            // Tx-hash copy. Tx hashes are public on
+            // chain but Universal Clipboard replication still leaks
+            // wallet-activity timing to other devices on the iCloud
+            // account. Hardened wrapper applies. See Pasteboard.swift.
+            Pasteboard.copySensitive(self.txHash)
+            Toast.showMessage(L.getCopiedByLangValues())
+        }
 
         let explorerButton = makeChromeIconButton(
             named: "address_explore",
             accessibility: L.getBlockExplorerTitleByLangValues()) { [weak self] in
-                guard let self = self, !self.txHash.isEmpty else { return }
-                self.openExplorer()
-            }
+            guard let self = self, !self.txHash.isEmpty else { return }
+            self.openExplorer()
+        }
 
         let iconRow = UIStackView(arrangedSubviews: [copyButton, explorerButton])
         iconRow.axis = .horizontal
@@ -117,12 +112,12 @@ public final class TransactionSentDialogViewController: ModalDialogViewControlle
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            card.widthAnchor.constraint(equalToConstant: 340)
-        ])
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+                card.widthAnchor.constraint(equalToConstant: 340)
+            ])
 
         view.installPressFeedbackRecursive()
     }
@@ -130,8 +125,8 @@ public final class TransactionSentDialogViewController: ModalDialogViewControlle
     // MARK: - Helpers
 
     private func makeChromeIconButton(named: String,
-                                      accessibility: String,
-                                      action: @escaping () -> Void) -> UIButton {
+        accessibility: String,
+        action: @escaping () -> Void) -> UIButton {
         let b = UIButton(type: .custom)
         let img = UIImage(named: named)?.withRenderingMode(.alwaysTemplate)
         b.setImage(img, for: .normal)
@@ -140,7 +135,7 @@ public final class TransactionSentDialogViewController: ModalDialogViewControlle
         b.widthAnchor.constraint(equalToConstant: 30).isActive = true
         b.heightAnchor.constraint(equalToConstant: 30).isActive = true
         b.accessibilityLabel = accessibility
-        b.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        b.addAction(UIAction(handler: { _ in action() }), for: .touchUpInside)
         return b
     }
 
@@ -150,9 +145,13 @@ public final class TransactionSentDialogViewController: ModalDialogViewControlle
             Toast.showError(Localization.shared.getNoActiveNetworkByLangValues())
             return
         }
-        let path = Constants.BLOCK_EXPLORER_TX_HASH_URL
-            .replacingOccurrences(of: "{txhash}", with: txHash)
-        guard let url = URL(string: base + path) else { return }
+        // Tx-hash URL composition runs through the
+        // validated wrapper so a malformed hash (which could only
+        // happen via a Swift-side regression today, but in defense-
+        // in-depth) cannot pivot the user into Safari at an
+        // attacker-chosen URL.
+        guard let url = UrlBuilder.blockExplorerTxUrl(
+            base: base, txHash: txHash) else { return }
         UIApplication.shared.open(url)
     }
 

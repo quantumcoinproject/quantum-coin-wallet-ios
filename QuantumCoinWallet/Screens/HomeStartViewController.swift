@@ -1,28 +1,22 @@
-//
 // HomeStartViewController.swift
-//
 // Port of `HomeStartFragment.java` / `home_start_fragment.xml`. Walks
 // the user through `infoStep` and `quizStep` items from `en_us.json`.
 // Wrong answers open a `MessageInformationDialogViewController`;
 // correct answers show the safety-quiz alert then proceed.
-//
 // Layout target (mirrors home_start_fragment.xml):
-//
-//   ScrollView
-//     White rounded "card" (10pt margins, 15pt corner radius)
-//       Step line:  "Welcome, info N OF M"  / "Safety Quiz N OF M"
-//       Divider (1pt, alpha 0.2, colorRectangleLine)
-//       Title:       item["title"]
-//       Body:        item["desc"]              <- info phase
-//                    item["question"] + radios <- quiz phase
-//       Divider (same)
-//       Right-aligned green "Next" pill button (#7d44aa, 16pt corners)
-//
+// ScrollView
+// White rounded "card" (10pt margins, 15pt corner radius)
+// Step line: "Welcome, info N OF M" / "Safety Quiz N OF M"
+// Divider (1pt, alpha 0.2, colorRectangleLine)
+// Title: item["title"]
+// Body: item["desc"] <- info phase
+// item["question"] + radios <- quiz phase
+// Divider (same)
+// Right-aligned green "Next" pill button (#7d44aa, 16pt corners)
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/HomeStartFragment.java
-//   app/src/main/res/layout/home_start_fragment.xml
-//   app/src/main/res/drawable/button_green_shadow.xml
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/HomeStartFragment.java
+// app/src/main/res/layout/home_start_fragment.xml
+// app/src/main/res/drawable/button_green_shadow.xml
 
 import UIKit
 
@@ -70,7 +64,7 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
 
         // The Next pill button is built once in `installCard` and is
         // already in the hierarchy. Quiz `ChoiceRowButton` rows are
-        // re-built per step inside `render()` which now also installs
+        // re-built per step inside `render` which now also installs
         // press feedback (idempotent for static surfaces).
         view.installPressFeedbackRecursive()
     }
@@ -82,11 +76,11 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
         scrollView.alwaysBounceVertical = true
         view.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
+                scrollView.topAnchor.constraint(equalTo: view.topAnchor),
+                scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            ])
     }
 
     private func installCard() {
@@ -113,17 +107,17 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
         // 10pt left/right card margins from the screen, 16pt top/bottom
         // breathing room so the card doesn't kiss the banner / safe area.
         NSLayoutConstraint.activate([
-            cardView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 16),
-            cardView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 10),
-            cardView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -10),
-            cardView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
-            cardView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -20),
+                cardView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 16),
+                cardView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 10),
+                cardView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -10),
+                cardView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
+                cardView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -20),
 
-            cardStack.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 20),
-            cardStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
-            cardStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
-            cardStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -25)
-        ])
+                cardStack.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 20),
+                cardStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
+                cardStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
+                cardStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -25)
+            ])
 
         // Row content
         stepLabel.font = Typography.boldTitle(20)
@@ -193,7 +187,7 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
         selectedChoiceIndex = nil
 
         switch currentStep {
-        case .info(let i):
+            case .info(let i):
             let item = infoItems[safe: i] ?? [:]
             stepLabel.text = formatStep(
                 template: Localization.shared.getInfoStep(),
@@ -206,7 +200,7 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
             messageLabel.isHidden = (messageLabel.text?.isEmpty ?? true)
             radioStack.isHidden = true
 
-        case .quiz(let i):
+            case .quiz(let i):
             let item = quizItems[safe: i] ?? [:]
             stepLabel.text = formatStep(
                 template: Localization.shared.getQuizStep(),
@@ -233,7 +227,7 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
         nextButton.setTitle(Localization.shared.getNextByLangValues(), for: .normal)
 
         // Press feedback for any newly-installed quiz `ChoiceRowButton`
-        // rows. `enablePressFeedback()` is idempotent for the static
+        // rows. `enablePressFeedback` is idempotent for the static
         // controls (Next button) that were already wired in viewDidLoad.
         radioStack.installPressFeedbackRecursive()
     }
@@ -242,8 +236,8 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
     /// `infoStep` / `quizStep` in `en_us.json`.
     private func formatStep(template: String, step: Int, total: Int) -> String {
         template
-            .replacingOccurrences(of: "[STEP]", with: "\(step)")
-            .replacingOccurrences(of: "[TOTAL_STEPS]", with: "\(total)")
+        .replacingOccurrences(of: "[STEP]", with: "\(step)")
+        .replacingOccurrences(of: "[TOTAL_STEPS]", with: "\(total)")
     }
 
     // MARK: - Actions
@@ -257,7 +251,7 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
 
     @objc private func tapNext() {
         switch currentStep {
-        case .info(let i):
+            case .info(let i):
             if i + 1 < infoItems.count {
                 currentStep = .info(i + 1)
             } else {
@@ -265,7 +259,7 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
             }
             render()
 
-        case .quiz(let i):
+            case .quiz(let i):
             guard let choice = selectedChoiceIndex else {
                 // Android shows the same centered information dialog as
                 // wrong-answer (`MessageInformationDialogFragment`) with
@@ -301,10 +295,10 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
             } else {
                 // Android `message_information_dialog_fragment.xml` uses
                 // `img_information` for both wrong-answer and no-choice.
-                let wrong = Localization.shared.getQuizWrongAnswer()
+                let wrong = Localization.shared.getQuizWrongAnswer
                 let msg = MessageInformationDialogViewController(
                     title: "",
-                    message: wrong,
+                    message: wrong(),
                     icon: UIImage(systemName: "exclamationmark.circle.fill"),
                     iconTint: .systemOrange)
                 present(msg, animated: true)
@@ -328,7 +322,6 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
 
 /// Single radio-style row used in the quiz: leading circle / dot
 /// indicator + multiline text. Mirrors the Android RadioButton shape.
-///
 /// Uses `type: .custom` (the default) - `.system` adds tint pulse +
 /// highlight animation that visibly flashes the row + the surrounding
 /// stack on selection.
@@ -375,9 +368,9 @@ private final class ChoiceRowButton: UIButton {
         // selected/unselected state in a font-portable way.
         let symbol = isChecked ? "\u{25CF}" : "\u{25CB}" // ● / ○
         let title = (currentTitle ?? "")
-            .replacingOccurrences(of: "\u{25CF} ", with: "")
-            .replacingOccurrences(of: "\u{25CB} ", with: "")
-        setTitle("\(symbol)  \(title)", for: .normal)
+        .replacingOccurrences(of: "\u{25CF} ", with: "")
+        .replacingOccurrences(of: "\u{25CB} ", with: "")
+        setTitle("\(symbol) \(title)", for: .normal)
     }
 
     override func setTitle(_ title: String?, for state: UIControl.State) {
@@ -385,10 +378,10 @@ private final class ChoiceRowButton: UIButton {
         // Strip any pre-existing indicator so callers can pass plain text
         // and we always re-derive the symbol from `isChecked`.
         let cleaned = t
-            .replacingOccurrences(of: "\u{25CF}  ", with: "")
-            .replacingOccurrences(of: "\u{25CB}  ", with: "")
+        .replacingOccurrences(of: "\u{25CF} ", with: "")
+        .replacingOccurrences(of: "\u{25CB} ", with: "")
         let symbol = isChecked ? "\u{25CF}" : "\u{25CB}"
-        super.setTitle("\(symbol)  \(cleaned)", for: state)
+        super.setTitle("\(symbol) \(cleaned)", for: state)
     }
 }
 

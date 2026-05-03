@@ -1,18 +1,15 @@
-//
 // ConfirmDialogViewController.swift
-//
 // Two-button confirmation dialog used for:
-//  - Cloud backup "info" screen (the `six-ui-fixes` merge).
-//  - Skip-seed-verify confirm.
-//  - Safety quiz alert (single-button variant via `hideCancel`).
-//
+// - Cloud backup "info" screen (the `six-ui-fixes` merge).
+// - Skip-seed-verify confirm.
+// - Safety quiz alert (single-button variant via `hideCancel`).
 
 import UIKit
 
 public final class ConfirmDialogViewController: ModalDialogViewController {
 
     public var onConfirm: (() -> Void)?
-    public var onCancel:  (() -> Void)?
+    public var onCancel: (() -> Void)?
 
     private let iconView = UIImageView()
     private let titleLabel = UILabel()
@@ -32,11 +29,11 @@ public final class ConfirmDialogViewController: ModalDialogViewController {
     private let isInfoVariant: Bool
 
     public init(title: String, message: String,
-                confirmText: String = Localization.shared.getOkByLangValues(),
-                cancelText:  String = Localization.shared.getCancelByLangValues(),
-                hideCancel: Bool = false,
-                icon: UIImage? = nil,
-                iconTint: UIColor? = nil) {
+        confirmText: String = Localization.shared.getOkByLangValues(),
+        cancelText: String = Localization.shared.getCancelByLangValues(),
+        hideCancel: Bool = false,
+        icon: UIImage? = nil,
+        iconTint: UIColor? = nil) {
         self.icon = icon
         self.iconTint = iconTint
         self.isInfoVariant = hideCancel
@@ -66,17 +63,17 @@ public final class ConfirmDialogViewController: ModalDialogViewController {
         cancelButton.addTarget(self, action: #selector(tapCancel), for: .touchUpInside)
 
         // Two layout modes:
-        //   • Info variant (`hideCancel == true`, e.g. quiz right
-        //     answer / no-active-network / wrong-password modal):
-        //     a single plain `UIButton(type: .system)` blue text
-        //     link, trailing-aligned via a leading flexible spacer.
-        //     Same lightweight dismiss style as the Unlock dialog's
-        //     buttons.
-        //   • Paired Cancel + OK (Skip-Verify confirm / Cloud info /
-        //     Send confirm / advanced-signing): the pill pair sits
-        //     trailing-aligned with each pill hugging its title
-        //     (96pt min), matching Android `gravity="right"` button
-        //     rows.
+        // • Info variant (`hideCancel == true`, e.g. quiz right
+        // answer / no-active-network / wrong-password modal):
+        // a single plain `UIButton(type: .system)` blue text
+        // link, trailing-aligned via a leading flexible spacer.
+        // Same lightweight dismiss style as the Unlock dialog's
+        // buttons.
+        // • Paired Cancel + OK (Skip-Verify confirm / Cloud info /
+        // Send confirm / advanced-signing): the pill pair sits
+        // trailing-aligned with each pill hugging its title
+        // (96pt min), matching Android `gravity="right"` button
+        // rows.
         let buttons: UIStackView
         if isInfoVariant {
             confirmLink.heightAnchor.constraint(greaterThanOrEqualToConstant: 36).isActive = true
@@ -142,12 +139,12 @@ public final class ConfirmDialogViewController: ModalDialogViewController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            card.widthAnchor.constraint(equalToConstant: 320)
-        ])
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+                card.widthAnchor.constraint(equalToConstant: 320)
+            ])
 
         // Apply alpha-dim press feedback to OK / Cancel.
         view.installPressFeedbackRecursive()

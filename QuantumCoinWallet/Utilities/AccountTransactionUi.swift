@@ -1,13 +1,9 @@
-//
 // AccountTransactionUi.swift
-//
 // Port of `AccountTransactionUi.java`. Holds display rules for the
 // transaction list that must be shared between the adapter row layout
 // and the explorer-open click guards.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/utils/AccountTransactionUi.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/utils/AccountTransactionUi.java
 
 import Foundation
 
@@ -23,9 +19,9 @@ public enum AccountTransactionUi {
         guard let raw = raw else { return "" }
         let s: String
         switch raw {
-        case let str as String:    s = str
-        case let ns as NSString:   s = ns as String
-        default:                    s = String(describing: raw)
+            case let str as String: s = str
+            case let ns as NSString: s = ns as String
+            default: s = String(describing: raw)
         }
         return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }

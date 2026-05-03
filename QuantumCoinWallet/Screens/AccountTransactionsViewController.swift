@@ -1,26 +1,22 @@
-//
 // AccountTransactionsViewController.swift
-//
 // Port of `AccountTransactionsFragment.java` /
 // `account_transactions_fragment.xml`. Top action bar with back arrow
 // and refresh icon, segmented Completed/Pending toggle, rounded
 // bordered card hosting a horizontally-scrollable Android-parity
 // table (In/Out | Coins | Date | From | To | Txn Hash), and a
 // trailing pagination row with `<` / `>` pill buttons.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/AccountTransactionsFragment.java
-//   app/src/main/res/layout/account_transactions_fragment.xml
-//   app/src/main/res/layout/account_transactions_header.xml
-//   app/src/main/res/layout/account_transactions_adapter.xml
-//   app/src/main/java/com/quantumcoinwallet/app/view/adapter/AccountTransactionAdapter.java
-//   app/src/main/java/com/quantumcoinwallet/app/view/adapter/AccountPendingTransactionAdapter.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/AccountTransactionsFragment.java
+// app/src/main/res/layout/account_transactions_fragment.xml
+// app/src/main/res/layout/account_transactions_header.xml
+// app/src/main/res/layout/account_transactions_adapter.xml
+// app/src/main/java/com/quantumcoinwallet/app/view/adapter/AccountTransactionAdapter.java
+// app/src/main/java/com/quantumcoinwallet/app/view/adapter/AccountPendingTransactionAdapter.java
 
 import UIKit
 
 public final class AccountTransactionsViewController: UIViewController,
-                                                      HomeScreenViewTypeProviding {
+HomeScreenViewTypeProviding {
 
     public var screenViewType: ScreenViewType { .innerFragment }
 
@@ -33,9 +29,9 @@ public final class AccountTransactionsViewController: UIViewController,
     private static let columnWidths: [CGFloat] = [70, 110, 220, 90, 90, 100]
 
     private let segmented = UISegmentedControl(items: [
-        Localization.shared.getCompletedTransactionsByLangValues(),
-        Localization.shared.getPendingTransactionsByLangValues()
-    ])
+            Localization.shared.getCompletedTransactionsByLangValues(),
+            Localization.shared.getPendingTransactionsByLangValues()
+        ])
 
     /// Card holding the table; rounded corners + 1pt border.
     private let card = UIView()
@@ -46,7 +42,7 @@ public final class AccountTransactionsViewController: UIViewController,
     /// empty (Android `linear_layout_account_transactions_empty`).
     private let emptyLabel = UILabel()
 
-    /// Spinner overlaid on the card during `loadPage()` to mirror
+    /// Spinner overlaid on the card during `loadPage` to mirror
     /// Android's `progress_loader_account_transactions` ProgressBar.
     private let spinner = UIActivityIndicatorView(style: .medium)
 
@@ -151,11 +147,11 @@ public final class AccountTransactionsViewController: UIViewController,
         // navigation hints rather than primary actions.
         let chevronCfg = UIImage.SymbolConfiguration(pointSize: 32, weight: .semibold)
         prevButton.setImage(UIImage(systemName: "chevron.left",
-                                    withConfiguration: chevronCfg),
-                            for: .normal)
+                withConfiguration: chevronCfg),
+            for: .normal)
         nextButton.setImage(UIImage(systemName: "chevron.right",
-                                    withConfiguration: chevronCfg),
-                            for: .normal)
+                withConfiguration: chevronCfg),
+            for: .normal)
         prevButton.tintColor = .label
         nextButton.tintColor = .label
         prevButton.backgroundColor = .clear
@@ -181,56 +177,56 @@ public final class AccountTransactionsViewController: UIViewController,
         scrollHugTable.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
-            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+                topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            segmented.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 4),
-            segmented.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            segmented.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+                segmented.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 4),
+                segmented.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+                segmented.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
 
-            card.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 12),
-            card.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            card.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-            card.bottomAnchor.constraint(equalTo: paginationRow.topAnchor, constant: -12),
+                card.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 12),
+                card.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
+                card.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
+                card.bottomAnchor.constraint(equalTo: paginationRow.topAnchor, constant: -12),
 
-            outerVScroll.topAnchor.constraint(equalTo: card.topAnchor),
-            outerVScroll.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            outerVScroll.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            outerVScroll.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+                outerVScroll.topAnchor.constraint(equalTo: card.topAnchor),
+                outerVScroll.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+                outerVScroll.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+                outerVScroll.bottomAnchor.constraint(equalTo: card.bottomAnchor),
 
-            // Pin the inner horizontal scroll to the outer scroll's
-            // content layout guide; its width follows the outer's
-            // frameLayoutGuide so it always fills the available width
-            // even when the table is narrow, while its height grows
-            // with the tableStack's intrinsic size. Same geometry
-            // used by `BlockchainNetworkViewController`.
-            innerHScroll.topAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.topAnchor),
-            innerHScroll.leadingAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.leadingAnchor),
-            innerHScroll.trailingAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.trailingAnchor),
-            innerHScroll.bottomAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.bottomAnchor),
-            innerHScroll.widthAnchor.constraint(equalTo: outerVScroll.frameLayoutGuide.widthAnchor),
-            innerHScroll.heightAnchor.constraint(equalTo: tableStack.heightAnchor),
+                // Pin the inner horizontal scroll to the outer scroll's
+                // content layout guide; its width follows the outer's
+                // frameLayoutGuide so it always fills the available width
+                // even when the table is narrow, while its height grows
+                // with the tableStack's intrinsic size. Same geometry
+                // used by `BlockchainNetworkViewController`.
+                innerHScroll.topAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.topAnchor),
+                innerHScroll.leadingAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.leadingAnchor),
+                innerHScroll.trailingAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.trailingAnchor),
+                innerHScroll.bottomAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.bottomAnchor),
+                innerHScroll.widthAnchor.constraint(equalTo: outerVScroll.frameLayoutGuide.widthAnchor),
+                innerHScroll.heightAnchor.constraint(equalTo: tableStack.heightAnchor),
 
-            tableStack.topAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.topAnchor),
-            tableStack.leadingAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.leadingAnchor),
-            tableStack.trailingAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.trailingAnchor),
-            tableStack.bottomAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.bottomAnchor),
+                tableStack.topAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.topAnchor),
+                tableStack.leadingAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.leadingAnchor),
+                tableStack.trailingAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.trailingAnchor),
+                tableStack.bottomAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.bottomAnchor),
 
-            scrollHugTable,
+                scrollHugTable,
 
-            emptyLabel.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: card.centerYAnchor),
-            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: card.leadingAnchor, constant: 16),
-            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -16),
+                emptyLabel.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+                emptyLabel.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+                emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: card.leadingAnchor, constant: 16),
+                emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -16),
 
-            spinner.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+                spinner.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+                spinner.centerYAnchor.constraint(equalTo: card.centerYAnchor),
 
-            paginationRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
-            paginationRow.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-            paginationRow.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12)
-        ])
+                paginationRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+                paginationRow.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+                paginationRow.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12)
+            ])
 
         rebuildRows()
         loadPage()
@@ -314,7 +310,6 @@ public final class AccountTransactionsViewController: UIViewController,
     /// Issue a request for `pageIndex`. When called without an
     /// argument, uses the live `pageIndex` (which is -1 on the very
     /// first load and after wallet/network changes).
-    ///
     /// Re-entrant calls while a request is already in flight are
     /// rejected with a toast (mirrors Android's
     /// `transaction_message_exits` short-circuit). This prevents a
@@ -351,7 +346,7 @@ public final class AccountTransactionsViewController: UIViewController,
                         address: addr, pageIndex: pageToRequest)
                     await MainActor.run {
                         self.handleResponse(items: r.result ?? [],
-                                            totalPages: r.totalPages)
+                            totalPages: r.totalPages)
                         self.isLoading = false
                     }
                 } else {
@@ -359,7 +354,7 @@ public final class AccountTransactionsViewController: UIViewController,
                         address: addr, pageIndex: pageToRequest)
                     await MainActor.run {
                         self.handleResponse(items: r.result ?? [],
-                                            totalPages: r.totalPages)
+                            totalPages: r.totalPages)
                         self.isLoading = false
                     }
                 }
@@ -400,7 +395,7 @@ public final class AccountTransactionsViewController: UIViewController,
     private func currentAddress() -> String {
         let idx = PrefConnect.shared.readInt(
             PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, default: 0)
-        return KeyStore.shared.address(forIndex: idx) ?? ""
+        return Strongbox.shared.address(forIndex: idx) ?? ""
     }
 
     // MARK: - Modal
@@ -437,9 +432,9 @@ public final class AccountTransactionsViewController: UIViewController,
         let walletAddress = currentAddress()
         for (rowIndex, txn) in items.enumerated() {
             tableStack.addArrangedSubview(makeBodyRow(
-                txn: txn,
-                walletAddress: walletAddress,
-                isLastRow: rowIndex == items.count - 1))
+                    txn: txn,
+                    walletAddress: walletAddress,
+                    isLastRow: rowIndex == items.count - 1))
         }
     }
 
@@ -460,17 +455,18 @@ public final class AccountTransactionsViewController: UIViewController,
             label.text = titles[index]
             label.font = Typography.boldTitle(13)
             label.textColor = UIColor(named: "colorCommon6") ?? .label
-            // Coins column body is left-aligned so the user can read
-            // the value without an awkward center-justified gap; keep
-            // the header aligned to match.
-            label.textAlignment = (index == 1) ? .left : .center
+            // Coins (index 1) and Date (index 2) bodies are left-
+            // aligned so the value/date stack reads naturally next
+            // to the column to its left; keep the headers aligned
+            // to match.
+            label.textAlignment = (index == 1 || index == 2) ? .left : .center
             label.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(label)
             NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
-            ])
+                    label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                    label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                    label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+                ])
             cell.isHidden = (index == 2 && currentTab == .pending)
         }
     }
@@ -480,13 +476,13 @@ public final class AccountTransactionsViewController: UIViewController,
     /// triangle (Completed tab only). Quantity / Date / From / To /
     /// Hash mirror the Android adapter exactly.
     private func makeBodyRow(txn: AccountTransaction,
-                             walletAddress: String,
-                             isLastRow: Bool) -> UIView {
+        walletAddress: String,
+        isLastRow: Bool) -> UIView {
         let from = AccountTransactionUi.safeAddress(txn.from)
-        let to   = AccountTransactionUi.safeAddress(txn.to)
+        let to = AccountTransactionUi.safeAddress(txn.to)
         let hash = AccountTransactionUi.safeAddress(txn.hash)
         let outgoing = !walletAddress.isEmpty && !from.isEmpty
-            && walletAddress.lowercased() == from.lowercased()
+        && walletAddress.lowercased() == from.lowercased()
         let success = AccountTransactionUi.isCompletedSuccessful(
             status: txn.status, receiptStatus: txn.receipt?.status)
         let showFailed = currentTab == .completed && !success
@@ -494,11 +490,11 @@ public final class AccountTransactionsViewController: UIViewController,
 
         return makeRow(isHeader: false, isLastRow: isLastRow) { index, cell in
             switch index {
-            case 0:
+                case 0:
                 fillInOutCell(cell,
-                              outgoing: isPending ? true : outgoing,
-                              showFailed: !isPending && showFailed)
-            case 1:
+                    outgoing: isPending ? true : outgoing,
+                    showFailed: !isPending && showFailed)
+                case 1:
                 // Mirror Android `AccountTransactionAdapter` which
                 // pipes the hex / decimal `value` through
                 // `CoinUtils.formatWei(new BigInteger(...))` so the
@@ -508,33 +504,34 @@ public final class AccountTransactionsViewController: UIViewController,
                 // aligned so the digit stack reads naturally next
                 // to the In/Out arrow column.
                 fillTextCell(cell,
-                             text: CoinUtils.formatWei(txn.value),
-                             font: Typography.body(11),
-                             alignment: .left)
-            case 2:
+                    text: CoinUtils.formatWei(txn.value),
+                    font: Typography.body(11),
+                    alignment: .left)
+                case 2:
                 fillTextCell(cell,
-                             text: formatDate(txn.date),
-                             font: Typography.body(11))
+                    text: formatDate(txn.date),
+                    font: Typography.body(11),
+                    alignment: .left)
                 cell.isHidden = isPending
-            case 3:
+                case 3:
                 fillTextCell(cell, text: shortHex(from), font: Typography.body(12))
                 if !from.isEmpty {
                     addExplorerTap(to: cell,
-                                   url: explorerAccountUrl(for: from))
+                        url: explorerAccountUrl(for: from))
                 }
-            case 4:
+                case 4:
                 fillTextCell(cell, text: shortHex(to), font: Typography.body(12))
                 if !to.isEmpty {
                     addExplorerTap(to: cell,
-                                   url: explorerAccountUrl(for: to))
+                        url: explorerAccountUrl(for: to))
                 }
-            case 5:
+                case 5:
                 fillTextCell(cell, text: shortHex(hash), font: Typography.body(12))
                 if !hash.isEmpty {
                     addExplorerTap(to: cell,
-                                   url: explorerTxUrl(for: hash))
+                        url: explorerTxUrl(for: hash))
                 }
-            default:
+                default:
                 break
             }
         }
@@ -546,8 +543,8 @@ public final class AccountTransactionsViewController: UIViewController,
     /// with content; the cell view is already sized to the column
     /// width and pre-padded.
     private func makeRow(isHeader: Bool,
-                         isLastRow: Bool,
-                         populate: (Int, UIView) -> Void) -> UIView {
+        isLastRow: Bool,
+        populate: (Int, UIView) -> Void) -> UIView {
         let row = UIStackView()
         row.axis = .horizontal
         row.alignment = .fill
@@ -597,7 +594,7 @@ public final class AccountTransactionsViewController: UIViewController,
         // The horizontal separator must span the full content width
         // so the bottom border lines up flush with the card edges.
         let totalWidth = Self.columnWidths.reduce(0, +)
-            + CGFloat(Self.columnWidths.count + 1) // separators
+        + CGFloat(Self.columnWidths.count + 1) // separators
         v.widthAnchor.constraint(equalToConstant: totalWidth).isActive = true
         return v
     }
@@ -605,7 +602,7 @@ public final class AccountTransactionsViewController: UIViewController,
     // MARK: - Cell content helpers
 
     private func fillTextCell(_ cell: UIView, text: String, font: UIFont,
-                              alignment: NSTextAlignment = .center) {
+        alignment: NSTextAlignment = .center) {
         let label = UILabel()
         label.text = text
         label.font = font
@@ -615,10 +612,10 @@ public final class AccountTransactionsViewController: UIViewController,
         label.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
-            label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
-        ])
+                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+            ])
     }
 
     /// Renders the In/Out cell: optional 22pt orange failure triangle
@@ -648,8 +645,8 @@ public final class AccountTransactionsViewController: UIViewController,
         // hex values keeps the in/out semantics visually identical
         // across platforms.
         arrow.tintColor = outgoing
-            ? UIColor(red: 1.0,    green: 0.647, blue: 0.0,   alpha: 1.0)
-            : UIColor(red: 0.114,  green: 0.800, blue: 0.439, alpha: 1.0)
+        ? UIColor(red: 1.0, green: 0.647, blue: 0.0, alpha: 1.0)
+        : UIColor(red: 0.114, green: 0.800, blue: 0.439, alpha: 1.0)
         arrow.contentMode = .scaleAspectFit
         arrow.translatesAutoresizingMaskIntoConstraints = false
         arrow.widthAnchor.constraint(equalToConstant: 30).isActive = true
@@ -660,9 +657,9 @@ public final class AccountTransactionsViewController: UIViewController,
 
         cell.addSubview(row)
         NSLayoutConstraint.activate([
-            row.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
-            row.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
-        ])
+                row.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+                row.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+            ])
     }
 
     private func addExplorerTap(to cell: UIView, url: URL?) {
@@ -679,15 +676,19 @@ public final class AccountTransactionsViewController: UIViewController,
     }
 
     private func explorerTxUrl(for hash: String) -> URL? {
-        let path = Constants.BLOCK_EXPLORER_TX_HASH_URL
-            .replacingOccurrences(of: "{txhash}", with: hash)
-        return URL(string: Constants.BLOCK_EXPLORER_URL + path)
+        // Validated tx-hash URL composition.
+        // `hash` flows in from server-supplied transaction summaries
+        // and could be attacker-controlled if the scan-API has been
+        // compromised. The validated wrapper rejects any non-32-byte-
+        // hex value before the link is opened.
+        return UrlBuilder.blockExplorerTxUrl(
+            base: Constants.BLOCK_EXPLORER_URL, txHash: hash)
     }
 
     private func explorerAccountUrl(for address: String) -> URL? {
-        let path = Constants.BLOCK_EXPLORER_ACCOUNT_TRANSACTION_URL
-            .replacingOccurrences(of: "{address}", with: address)
-        return URL(string: Constants.BLOCK_EXPLORER_URL + path)
+        // Validated address URL composition.
+        return UrlBuilder.blockExplorerAccountUrl(
+            base: Constants.BLOCK_EXPLORER_URL, address: address)
     }
 
     /// Truncate to 7 chars to match Android's `substring(0, 7)`.
@@ -730,9 +731,9 @@ public final class AccountTransactionsViewController: UIViewController,
     /// user still sees something) and "" on empty / nil input.
     private func formatDate(_ raw: String?) -> String {
         guard let s = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !s.isEmpty else { return "" }
+        !s.isEmpty else { return "" }
         let parsed = Self.inputISOWithFractional.date(from: s)
-            ?? Self.inputISOPlain.date(from: s)
+        ?? Self.inputISOPlain.date(from: s)
         guard let date = parsed else { return s }
         return Self.outputDate.string(from: date) + " GMT"
     }

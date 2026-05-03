@@ -1,21 +1,17 @@
-//
 // HomeViewController.swift
-//
 // Single-activity / fragment-container port of `HomeActivity`. Owns
 // the top banner, network chip, center wallet strip, fragment
 // container, offline overlay, and bottom nav. Exposes
 // `beginTransaction` / `beginTransactionNow` helpers that exactly
-// mirror Android `FragmentTransaction.commit()` / `commitNow()`.
-//
+// mirror Android `FragmentTransaction.commit` / `commitNow`.
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/activities/HomeActivity.java
-//   app/src/main/res/layout/home_activity.xml
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/activities/HomeActivity.java
+// app/src/main/res/layout/home_activity.xml
 
 import UIKit
 
 public enum ScreenViewType: Int {
-    case mainHome  = 0   // show banner (wrap), network chip, center strip, bottom nav
+    case mainHome = 0 // show banner (wrap), network chip, center strip, bottom nav
     case onboarding = -1 // show banner (fixed), hide everything else
     case innerFragment = 1 // show banner (fixed), hide network + strip, show bottom nav
 }
@@ -24,20 +20,20 @@ public enum ScreenViewType: Int {
 /// was last on. Settings does not appear here because it is the
 /// destination, not a candidate back-target.
 public enum PrimaryTab {
-    case main      // HomeMainViewController (wallet dashboard)
-    case wallets   // WalletsViewController
+    case main // HomeMainViewController (wallet dashboard)
+    case wallets // WalletsViewController
 }
 
 public final class HomeViewController: UIViewController {
 
     // MARK: - Chrome views
 
-    private let topBannerView    = TopBannerView()
+    private let topBannerView = TopBannerView()
     private let networkChipButton = UIButton(type: .system)
-    private let centerStripView  = CenterStripView()
-    private let containerView    = UIView()
+    private let centerStripView = CenterStripView()
+    private let containerView = UIView()
     private let offlineOverlayView = OfflineOverlayView()
-    private let bottomNavView    = BottomNavView()
+    private let bottomNavView = BottomNavView()
 
     // MARK: - Child
 
@@ -47,12 +43,12 @@ public final class HomeViewController: UIViewController {
     private var currentScreenViewType: ScreenViewType = .mainHome
 
     /// Most-recent primary tab the user landed on. Updated whenever
-    /// `showMain()` / `showWallets()` runs, or the bottom nav routes
+    /// `showMain` / `showWallets` runs, or the bottom nav routes
     /// directly to Wallets.
     private var lastSelectedTab: PrimaryTab = .main
 
     /// Snapshot of `lastSelectedTab` taken the moment the user enters
-    /// Settings. `popFromSettings()` reads this to decide whether back
+    /// Settings. `popFromSettings` reads this to decide whether back
     /// returns to the dashboard or the Wallets list. Defaults to
     /// `.main` so the first-ever tap on Settings (with no prior tab
     /// selection captured) still routes somewhere sensible.
@@ -61,7 +57,7 @@ public final class HomeViewController: UIViewController {
     /// Container's top anchor is swapped per `ScreenViewType` so hidden
     /// chrome (network chip + center strip) does not reserve space on
     /// onboarding/inner-fragment screens. Mirrors Android's
-    /// `screenViewType()` which both `setVisibility(GONE)` and re-runs
+    /// `screenViewType` which both `setVisibility(GONE)` and re-runs
     /// `setLayoutParams`.
     private var containerTopConstraint: NSLayoutConstraint?
     private var containerBottomConstraint: NSLayoutConstraint?
@@ -71,7 +67,6 @@ public final class HomeViewController: UIViewController {
     /// `RunLoop.main` instead of a dedicated background thread.
     /// Balance only -- the token list is event-driven (load / wallet
     /// change / network change).
-    ///
     /// The interval is 10s while the app is foregrounded and slows
     /// to 300s when backgrounded. iOS will eventually suspend the
     /// process while it's in the background, but as long as the
@@ -92,7 +87,7 @@ public final class HomeViewController: UIViewController {
         view.backgroundColor = UIColor(named: "colorBackground") ?? .systemBackground
 
         [topBannerView, centerStripView,
-         containerView, offlineOverlayView, bottomNavView].forEach {
+            containerView, offlineOverlayView, bottomNavView].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -106,7 +101,7 @@ public final class HomeViewController: UIViewController {
         topBannerView.setNetworkChipView(networkChipButton)
 
         bottomNavView.onSelect = { [weak self] tab in self?.handleBottomNavTap(tab) }
-        centerStripView.onSend    = { [weak self] in self?.presentSendFlow() }
+        centerStripView.onSend = { [weak self] in self?.presentSendFlow() }
         centerStripView.onReceive = { [weak self] in self?.presentReceive() }
         centerStripView.onTransactions = { [weak self] in self?.presentTransactions() }
         centerStripView.onRefresh = { [weak self] in self?.refreshBalance(manual: true) }
@@ -117,42 +112,42 @@ public final class HomeViewController: UIViewController {
         // Static anchors. The container's top/bottom are stored separately
         // so they can be swapped per ScreenViewType in `apply(_:)`.
         NSLayoutConstraint.activate([
-            // Pin the banner *frame* to the very top of the window so
-            // the gradient bleeds into the status-bar / Dynamic-Island
-            // strip on notched devices (filling what was previously a
-            // `colorBackground` gutter alongside the camera cut-out).
-            // The banner's inner content (logo, title, network chip)
-            // is anchored to `safeAreaLayoutGuide.topAnchor` *inside*
-            // `TopBannerView`, so nothing is actually clipped by the
-            // notch. The matching height bump in
-            // `viewDidLayoutSubviews` keeps the banner's *bottom* edge
-            // invariant in screen space, so the centre wallet strip
-            // and inner-fragment containers do not shift.
-            topBannerView.topAnchor.constraint(equalTo: view.topAnchor),
-            topBannerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBannerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                // Pin the banner *frame* to the very top of the window so
+                // the gradient bleeds into the status-bar / Dynamic-Island
+                // strip on notched devices (filling what was previously a
+                // `colorBackground` gutter alongside the camera cut-out).
+                // The banner's inner content (logo, title, network chip)
+                // is anchored to `safeAreaLayoutGuide.topAnchor` *inside*
+                // `TopBannerView`, so nothing is actually clipped by the
+                // notch. The matching height bump in
+                // `viewDidLayoutSubviews` keeps the banner's *bottom* edge
+                // invariant in screen space, so the centre wallet strip
+                // and inner-fragment containers do not shift.
+                topBannerView.topAnchor.constraint(equalTo: view.topAnchor),
+                topBannerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                topBannerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            // Network chip is now docked inside `topBannerView` (see
-            // setNetworkChipView), so the strip can sit immediately
-            // below the banner with only a tiny 4pt gap, matching
-            // Android `home_activity.xml` where `linearLayout_home_top`
-            // butts directly against the banner.
-            centerStripView.topAnchor.constraint(equalTo: topBannerView.bottomAnchor, constant: 4),
-            centerStripView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            centerStripView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                // Network chip is now docked inside `topBannerView` (see
+                // setNetworkChipView), so the strip can sit immediately
+                // below the banner with only a tiny 4pt gap, matching
+                // Android `home_activity.xml` where `linearLayout_home_top`
+                // butts directly against the banner.
+                centerStripView.topAnchor.constraint(equalTo: topBannerView.bottomAnchor, constant: 4),
+                centerStripView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                centerStripView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                containerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                containerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            offlineOverlayView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            offlineOverlayView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            offlineOverlayView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            offlineOverlayView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
+                offlineOverlayView.topAnchor.constraint(equalTo: containerView.topAnchor),
+                offlineOverlayView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                offlineOverlayView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                offlineOverlayView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
 
-            bottomNavView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bottomNavView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomNavView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
-        ])
+                bottomNavView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                bottomNavView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                bottomNavView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+            ])
 
         // Seed the swappable container anchors with `.mainHome` defaults.
         // `apply(_:)` will rewire them as soon as a child VC is attached.
@@ -169,7 +164,7 @@ public final class HomeViewController: UIViewController {
         // setActive, lockWallet resetToBundled). Avoids stale text on
         // the main screen after the user switches networks via the
         // picker and pops back, and ensures the chip flips to the
-        // user's saved selection the instant the vault unlock
+        // user's saved selection the instant the strongbox unlock
         // completes.
         NotificationCenter.default.addObserver(
             self,
@@ -255,9 +250,9 @@ public final class HomeViewController: UIViewController {
         // wrap-content baseline (logo 50pt + title + padding ~ 80pt).
         let target: CGFloat
         switch currentScreenViewType {
-        case .onboarding:
+            case .onboarding:
             target = view.bounds.width * 0.30
-        case .mainHome, .innerFragment:
+            case .mainHome, .innerFragment:
             // 96pt (was 80) so the centered "Quantum Coin (Q)" title has
             // breathing room below it on the main wallet screen,
             // matching Android `home_activity.xml` `imageView_home_logo`
@@ -285,22 +280,21 @@ public final class HomeViewController: UIViewController {
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // Safety net for the cold-launch present-from-viewDidLoad
-        // race: `routeInitialScreen()` runs from viewDidLoad and, on
+        // race: `routeInitialScreen` runs from viewDidLoad and, on
         // a locked + has-wallets cold launch, immediately tries to
         // `present(...)` the unlock gate. UIKit can silently drop
         // that present while the rootViewController swap is still
         // in flight, leaving the user staring at an empty chrome
         // shell with no prompt.
-        //
         // viewDidAppear is the safest moment to present a modal -
         // the view is unambiguously on screen and UIKit is settled.
         // Re-attempt here if we're still in the locked/no-modal
         // state. The guards make this idempotent across repeated
         // viewDidAppear fires (e.g. after dismissing a child sheet
         // or returning from background).
-        if !KeyStore.shared.isUnlocked
-            && hasExistingWallets()
-            && presentedViewController == nil {
+        if !Strongbox.shared.isSnapshotLoaded
+        && hasExistingWallets()
+        && presentedViewController == nil {
             presentUnlockGate()
         }
     }
@@ -308,7 +302,7 @@ public final class HomeViewController: UIViewController {
     // MARK: - Initial routing (mirrors HomeActivity branching)
 
     private func routeInitialScreen() {
-        if !KeyStore.shared.isUnlocked && hasExistingWallets() {
+        if !Strongbox.shared.isSnapshotLoaded && hasExistingWallets() {
             presentUnlockGate()
             return
         }
@@ -320,8 +314,17 @@ public final class HomeViewController: UIViewController {
         }
     }
 
+    /// True if at least one strongbox slot file exists on disk.
+    /// Source of truth for the cold-launch routing because the
+    /// in-memory snapshot is empty before the user has unlocked,
+    /// and a `Strongbox.shared.maxWalletIndex` consult would
+    /// otherwise return `-1` and route a returning user into the
+    /// onboarding flow.
     private func hasExistingWallets() -> Bool {
-        KeyStore.shared.maxWalletIndex() >= 0
+        if case .strongboxPresent = UnlockCoordinatorV2.bootState() {
+            return true
+        }
+        return false
     }
 
     /// Public re-entry from `SessionLock` after the 5-min idle relock
@@ -329,17 +332,17 @@ public final class HomeViewController: UIViewController {
     /// in-memory address map is empty and `centerStripView` would
     /// otherwise be stuck displaying the now-stale address. This
     /// helper:
-    ///   - Tears down any modal that might have been on top when the
-    ///     user backgrounded the app (a leftover wait dialog, picker,
-    ///     confirmation sheet, ...). UIKit silently rejects a
-    ///     `present(...)` from a presenter that already has its own
-    ///     presented chain, so without the dismiss-first pass the
-    ///     unlock dialog never appears.
-    ///   - Blanks the strip's `currentAddress` so the user sees a
-    ///     cleanly locked state instead of stale data.
-    ///   - Routes to the same cold-launch unlock gate the very first
-    ///     `routeInitialScreen()` uses, so success / wrong-password
-    ///     UX matches the rest of the app.
+    /// - Tears down any modal that might have been on top when the
+    /// user backgrounded the app (a leftover wait dialog, picker,
+    /// confirmation sheet, ...). UIKit silently rejects a
+    /// `present(...)` from a presenter that already has its own
+    /// presented chain, so without the dismiss-first pass the
+    /// unlock dialog never appears.
+    /// - Blanks the strip's `currentAddress` so the user sees a
+    /// cleanly locked state instead of stale data.
+    /// - Routes to the same cold-launch unlock gate the very first
+    /// `routeInitialScreen` uses, so success / wrong-password
+    /// UX matches the rest of the app.
     public func relockAndPresentUnlock() {
         // Blank the strip first so the user never sees the stale
         // address through any brief gap between the dismiss
@@ -353,7 +356,6 @@ public final class HomeViewController: UIViewController {
             // is cleared, strip is blank, but no unlock dialog
             // surfaces until a later idle-timer cycle re-fires the
             // relock).
-            //
             // Wait for the dismiss completion before presenting so
             // the presentation chain is empty by the time we try to
             // surface the gate.
@@ -384,8 +386,8 @@ public final class HomeViewController: UIViewController {
                 dlg.showOrangeError(Localization.shared.getEmptyPasswordByErrors())
                 return
             }
-            // `KeyStore.unlock` runs scrypt key-derivation, which can
-            // take a few seconds on first launch; surface the
+            // The unlock helper runs scrypt key-derivation, which
+            // can take a few seconds on first launch; surface the
             // standard "Please wait while..." dialog over the unlock
             // sheet so the UI is not visibly frozen. Mirrors the
             // pattern used by `BackupOptionsViewController.runBackupFlow`.
@@ -395,10 +397,13 @@ public final class HomeViewController: UIViewController {
             Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
                 var failure: Error? = nil
                 do {
-                    // KeyStore.unlock(password:) calls
-                    // SessionLock.markUnlockedNow() internally on
-                    // success, so we don't repeat it here.
-                    try KeyStore.shared.unlock(password: pw)
+                    // `unlockWithPasswordAndApplySession` runs the
+                    // limiter pre-check, scrypt+AEAD unlock, and
+                    // dispatches `SessionLock.markUnlockedNow` +
+                    // `BlockchainNetworkManager.applyDecryptedConfig`
+                    // internally on success - we don't repeat them
+                    // here.
+                    try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(pw)
                 } catch {
                     failure = error
                 }
@@ -412,11 +417,26 @@ public final class HomeViewController: UIViewController {
                         } else {
                             // Wrong-password branch: orange alert
                             // layered on top of the unlock dialog.
-                            // `clearField()` is intentionally NOT
+                            // `clearField` is intentionally NOT
                             // called so the typed password is
                             // preserved for typo-fix retry.
-                            dlg?.showOrangeError(
-                                Localization.shared.getWalletPasswordMismatchByErrors())
+                            // Distinguish brute-force
+                            // lockout from a regular wrong-password.
+                            // Showing the generic "wrong password"
+                            // string during lockout would confuse the
+                            // user ("but I typed it correctly!");
+                            // showing the "wait N seconds" message
+                            // tells them the gate is throttling them
+                            // by design. See UnlockAttemptLimiter.
+                            if let uc = err as? UnlockCoordinatorV2Error,
+                            case let .tooManyAttempts(seconds) = uc {
+                                dlg?.showOrangeError(
+                                    UnlockAttemptLimiter.userFacingLockoutMessage(
+                                        remainingSeconds: seconds))
+                            } else {
+                                dlg?.showOrangeError(
+                                    Localization.shared.getWalletPasswordMismatchByErrors())
+                            }
                         }
                     }
                 }
@@ -429,7 +449,6 @@ public final class HomeViewController: UIViewController {
         // leaves the user staring at an empty chrome shell with no
         // unlock prompt. Hopping one runloop tick lets UIKit finish
         // the swap before we try to present.
-        //
         // The relock path also flows through this method (via
         // `relockAndPresentUnlock` -> `dismiss` completion -> here),
         // and the additional async hop is imperceptible there.
@@ -468,11 +487,11 @@ public final class HomeViewController: UIViewController {
         vc.view.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(vc.view)
         NSLayoutConstraint.activate([
-            vc.view.topAnchor.constraint(equalTo: containerView.topAnchor),
-            vc.view.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            vc.view.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            vc.view.bottomAnchor.constraint(equalTo: containerView.bottomAnchor)
-        ])
+                vc.view.topAnchor.constraint(equalTo: containerView.topAnchor),
+                vc.view.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+                vc.view.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+                vc.view.bottomAnchor.constraint(equalTo: containerView.bottomAnchor)
+            ])
         vc.didMove(toParent: self)
         currentChild = vc
         if let screenViewProvider = vc as? HomeScreenViewTypeProviding {
@@ -488,17 +507,17 @@ public final class HomeViewController: UIViewController {
         // Visibility - keep the existing flips so chrome views aren't
         // visually shown when hidden.
         switch type {
-        case .mainHome:
+            case .mainHome:
             topBannerView.isHidden = false
             networkChipButton.isHidden = false
             centerStripView.isHidden = false
             bottomNavView.isHidden = false
-        case .onboarding:
+            case .onboarding:
             topBannerView.isHidden = false
             networkChipButton.isHidden = true
             centerStripView.isHidden = true
             bottomNavView.isHidden = true
-        case .innerFragment:
+            case .innerFragment:
             topBannerView.isHidden = false
             networkChipButton.isHidden = true
             centerStripView.isHidden = true
@@ -507,26 +526,26 @@ public final class HomeViewController: UIViewController {
 
         // Layout collapse - rebind container's top/bottom so hidden views
         // do not reserve any vertical space. Mirrors Android's
-        // `screenViewType()` which rewires LayoutParams on every state.
+        // `screenViewType` which rewires LayoutParams on every state.
         containerTopConstraint?.isActive = false
         containerBottomConstraint?.isActive = false
 
         let topAnchorView: NSLayoutYAxisAnchor
         let topConstant: CGFloat
         switch type {
-        case .mainHome:
+            case .mainHome:
             topAnchorView = centerStripView.bottomAnchor
             topConstant = 4
-        case .innerFragment, .onboarding:
+            case .innerFragment, .onboarding:
             topAnchorView = topBannerView.bottomAnchor
             topConstant = 8
         }
 
         let bottomAnchorView: NSLayoutYAxisAnchor
         switch type {
-        case .mainHome, .innerFragment:
+            case .mainHome, .innerFragment:
             bottomAnchorView = bottomNavView.topAnchor
-        case .onboarding:
+            case .onboarding:
             bottomAnchorView = view.safeAreaLayoutGuide.bottomAnchor
         }
 
@@ -567,17 +586,17 @@ public final class HomeViewController: UIViewController {
 
     private func handleBottomNavTap(_ tab: BottomNavView.Tab) {
         switch tab {
-        case .wallets:
+            case .wallets:
             lastSelectedTab = .wallets
             beginTransactionNow(WalletsViewController()); apply(.innerFragment)
-        case .help:
+            case .help:
             if let u = URL(string: Constants.DP_DOCS_URL) {
                 UIApplication.shared.open(u)
             }
-        case .blockExplorer:
+            case .blockExplorer:
             openBlockExplorer()
-        case .settings:
-            // Capture the current primary tab so `popFromSettings()`
+            case .settings:
+            // Capture the current primary tab so `popFromSettings`
             // knows where back should land, then route into Settings.
             lastTabBeforeSettings = lastSelectedTab
             beginTransactionNow(SettingsViewController()); apply(.innerFragment)
@@ -586,14 +605,14 @@ public final class HomeViewController: UIViewController {
 
     /// Called by `SettingsViewController`'s back arrow. Returns the
     /// user to whichever primary tab they were on the instant they
-    /// entered Settings (`.main` -> `showMain()`, `.wallets` ->
-    /// `showWallets()`). Mirrors how `handleBottomNavTap` would itself
+    /// entered Settings (`.main` -> `showMain`, `.wallets` ->
+    /// `showWallets`). Mirrors how `handleBottomNavTap` would itself
     /// route, just driven by the captured `lastTabBeforeSettings`.
     public func popFromSettings() {
         switch lastTabBeforeSettings {
-        case .wallets:
+            case .wallets:
             showWallets()
-        case .main:
+            case .main:
             showMain()
         }
     }
@@ -627,11 +646,15 @@ public final class HomeViewController: UIViewController {
             showNoActiveNetworkDialog()
             return
         }
-        let path = Constants.BLOCK_EXPLORER_ACCOUNT_TRANSACTION_URL
-            .replacingOccurrences(of: "{address}", with: address)
-        if let url = URL(string: base + path) {
-            UIApplication.shared.open(url)
-        }
+        // Build via the validated wrapper so an
+        // attacker-controlled address (e.g. from a token contract
+        // returned by a hostile scan-API response) cannot smuggle
+        // path/query/fragment metacharacters into the URL that gets
+        // handed to UIApplication.shared.open. Returns nil and the
+        // tap silently no-ops on validation failure.
+        guard let url = UrlBuilder.blockExplorerAccountUrl(
+            base: base, address: address) else { return }
+        UIApplication.shared.open(url)
     }
 
     private func showNoActiveNetworkDialog() {
@@ -657,12 +680,10 @@ public final class HomeViewController: UIViewController {
     }
 
     /// Re-fetch the main coin balance.
-    ///
     /// `manual = true` is reserved for explicit user action (the
     /// center-strip refresh button). On failure we surface a modal
     /// error dialog with OK and leave the previously-displayed balance
     /// value in place so the user keeps context.
-    ///
     /// `manual = false` is used by the initial main-screen load,
     /// wallet/network-change observers, and the 5s periodic poll.
     /// Errors here are intentionally silent: any failure (4xx, 5xx,
@@ -714,8 +735,8 @@ public final class HomeViewController: UIViewController {
     private func presentBalanceError(_ error: Error) {
         let L = Localization.shared
         let title = L.getErrorTitleByLangValues().isEmpty
-            ? "Error"
-            : L.getErrorTitleByLangValues()
+        ? "Error"
+        : L.getErrorTitleByLangValues()
         let body: String
         if case ApiError.offline = error {
             body = "Unable to fetch balance: network connection unavailable."
@@ -750,7 +771,7 @@ public final class HomeViewController: UIViewController {
         if #available(iOS 15.0, *) {
             var cfg = UIButton.Configuration.plain()
             cfg.image = UIImage(named: "caret_down_outline")?
-                .withRenderingMode(.alwaysTemplate)
+            .withRenderingMode(.alwaysTemplate)
             cfg.imagePlacement = .trailing
             cfg.imagePadding = 4
             cfg.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
@@ -762,7 +783,7 @@ public final class HomeViewController: UIViewController {
         } else {
             networkChipButton.setImage(
                 UIImage(named: "caret_down_outline")?
-                    .withRenderingMode(.alwaysTemplate),
+                .withRenderingMode(.alwaysTemplate),
                 for: .normal)
             networkChipButton.semanticContentAttribute = .forceRightToLeft
             networkChipButton.tintColor = chipColor
@@ -816,7 +837,7 @@ public final class HomeViewController: UIViewController {
     }
 
     /// Returns the address tied to `WALLET_CURRENT_ADDRESS_INDEX_KEY`,
-    /// or empty if no wallet has been persisted yet (or the vault is
+    /// or empty if no wallet has been persisted yet (or the strongbox is
     /// still locked - the in-memory map is cleared on lock so the
     /// address strip simply renders blank behind the dim until the
     /// user unlocks).
@@ -829,7 +850,7 @@ public final class HomeViewController: UIViewController {
         // wallet 0 even after they tap a different row.
         let idx = PrefConnect.shared.readInt(
             PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, default: 0)
-        return KeyStore.shared.address(forIndex: idx) ?? ""
+        return Strongbox.shared.address(forIndex: idx) ?? ""
     }
 }
 

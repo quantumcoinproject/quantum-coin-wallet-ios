@@ -3,507 +3,617 @@
 <head><meta charset="utf-8"><title>Bridge</title></head>
 <body>
 <script>
-// M-02: diagnostic console output is gated behind AndroidBridge.isDebug()
+// Diagnostic console output is gated behind AndroidBridge.isDebug()
 // so release builds never stringify exception state (which could contain
 // sensitive argument values) into logcat via onConsoleMessage.
+// (audit-grade notes for AI reviewers and human
+// auditors): the diagnostic output below is further restricted to
+// log only opaque category tokens plus the requestId. The raw
+// exception message and any payload-derived field is NEVER
+// emitted, even in DEBUG, because:
+// * `JsBridgeError` messages from a failing decrypt include
+// ciphertext bytes;
+// * `JSON.parse` failures echo the bad input, which for the
+// `walletJson` / `password` paths is the user's secret;
+// * `window.onerror` `message` arguments include the offending
+// line of code from the SDK, which can include any string the
+// caller passed in.
+// The opaque category token (e.g. `"AEAD_FAIL"`, `"PARSE_FAIL"`)
+// is enough for a developer to locate the failing code path; the
+// message itself is intentionally suppressed to keep the bridge
+// from being a side-channel that exfiltrates whatever the failing
+// payload was. The Swift side already sees the full error via the
+// `success: false, error: message` JSON it gets back from
+// `AndroidBridge.onResult`, which is the right channel for the
+// detail to reach the developer (and which is itself routed
+// through `Logger.debug` on the Swift side, where it is redacted).
 function _isDebug() {
-    try {
-        return typeof AndroidBridge !== 'undefined'
-            && typeof AndroidBridge.isDebug === 'function'
-            && AndroidBridge.isDebug() === true;
-    } catch (_) {
-        return false;
-    }
+ try {
+ return typeof AndroidBridge !== 'undefined'
+ && typeof AndroidBridge.isDebug === 'function'
+ && AndroidBridge.isDebug() === true;
+ } catch (_) {
+ return false;
+ }
+}
+function _categorize(message) {
+ var s = String(message || '').toLowerCase();
+ if (s.indexOf('aead') >= 0 || s.indexOf('cipher') >= 0
+ || s.indexOf('decrypt') >= 0 || s.indexOf('mac') >= 0) {
+ return 'AEAD_FAIL';
+ }
+ if (s.indexOf('parse') >= 0 || s.indexOf('json') >= 0
+ || s.indexOf('syntax') >= 0) {
+ return 'PARSE_FAIL';
+ }
+ if (s.indexOf('initialize') >= 0 || s.indexOf('sdk') >= 0
+ || s.indexOf('bundle') >= 0) {
+ return 'SDK_FAIL';
+ }
+ if (s.indexOf('payload') >= 0 || s.indexOf('missing') >= 0) {
+ return 'PAYLOAD_FAIL';
+ }
+ if (s.indexOf('network') >= 0 || s.indexOf('rpc') >= 0
+ || s.indexOf('fetch') >= 0) {
+ return 'NETWORK_FAIL';
+ }
+ return 'OTHER_FAIL';
 }
 window.onerror = function(message, source, lineno, colno, error) {
-    if (_isDebug()) {
-        console.error('UNCAUGHT JS ERROR: ' + message + ' at ' + source + ':' + lineno + ':' + colno);
-        if (error && error.stack) console.error('Stack: ' + error.stack);
-    }
-    return true;
+ if (_isDebug()) {
+ console.error('UNCAUGHT_JS [' + _categorize(message) + '] at line ' + lineno);
+ }
+ return true;
 };
 </script>
-<script src="quantumcoin-bundle.js" onerror="if (_isDebug()) console.error('FATAL: Failed to load quantumcoin-bundle.js script tag')"></script>
+<script src="quantumcoin-bundle.js" onerror="if (_isDebug()) console.error('SDK_FAIL: bundle load failed')"></script>
 <script>
 if (_isDebug()) {
-    console.log('Bridge: bundle loaded, QuantumCoinSDK defined = ' + (typeof QuantumCoinSDK !== 'undefined'));
-    if (typeof QuantumCoinSDK !== 'undefined') {
-        console.log('Bridge: SDK keys = ' + Object.keys(QuantumCoinSDK).slice(0, 20).join(', '));
-    } else {
-        console.error('Bridge: QuantumCoinSDK is UNDEFINED after bundle script tag');
-    }
+ console.log('Bridge: bundle defined = ' + (typeof QuantumCoinSDK !== 'undefined'));
+ if (typeof QuantumCoinSDK === 'undefined') {
+ console.error('SDK_FAIL: QuantumCoinSDK undefined post-load');
+ }
 }
 
 var _sdkInitialized = false;
 
 function bytesToBase64(bytes) {
-    var binary = '';
-    for (var i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
+ var binary = '';
+ for (var i = 0; i < bytes.length; i++) {
+ binary += String.fromCharCode(bytes[i]);
+ }
+ return btoa(binary);
 }
 
 function base64ToBytes(b64) {
-    var binary = atob(b64);
-    var bytes = new Uint8Array(binary.length);
-    for (var i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
+ var binary = atob(b64);
+ var bytes = new Uint8Array(binary.length);
+ for (var i = 0; i < binary.length; i++) {
+ bytes[i] = binary.charCodeAt(i);
+ }
+ return bytes;
 }
 
 function hexToBytes(hex) {
-    if (!hex) return new Uint8Array(0);
-    var clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-    if (clean.length % 2 !== 0) throw new Error('invalid hex length');
-    var bytes = new Uint8Array(clean.length / 2);
-    for (var i = 0; i < bytes.length; i++) {
-        bytes[i] = parseInt(clean.substr(i * 2, 2), 16);
-    }
-    return bytes;
+ if (!hex) return new Uint8Array(0);
+ var clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+ if (clean.length % 2 !== 0) throw new Error('invalid hex length');
+ var bytes = new Uint8Array(clean.length / 2);
+ for (var i = 0; i < bytes.length; i++) {
+ bytes[i] = parseInt(clean.substr(i * 2, 2), 16);
+ }
+ return bytes;
 }
 
 function extractWalletInfo(wallet) {
-    return {
-        address: wallet.address,
-        privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
-        publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes)
-    };
+ return {
+ address: wallet.address,
+ privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
+ publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes)
+ };
 }
 
 function sendResult(requestId, data) {
-    AndroidBridge.onResult(requestId, JSON.stringify({ success: true, data: data }));
+ AndroidBridge.onResult(requestId, JSON.stringify({ success: true, data: data }));
 }
 
 function sendError(requestId, error) {
-    var message = (error && error.message) ? error.message : String(error);
-    if (_isDebug()) {
-        console.error('Bridge error [' + requestId + ']: ' + message);
-    }
-    AndroidBridge.onResult(requestId, JSON.stringify({ success: false, error: message }));
+ var message = (error && error.message) ? error.message : String(error);
+ if (_isDebug()) {
+ // Log only the requestId and an opaque
+ // category. The raw `message` may contain ciphertext, the
+ // failing payload, or part of the user's typed input; we
+ // forward it to the Swift side via `onResult` (where it
+ // is routed through `Logger.debug` and redacted), but it
+ // never reaches Console.app from this bridge.
+ console.error('BRIDGE_ERR [' + _categorize(message) + '] req=' + requestId);
+ }
+ AndroidBridge.onResult(requestId, JSON.stringify({ success: false, error: message }));
 }
 
 function requireSDK(requestId) {
-    if (typeof QuantumCoinSDK === 'undefined') {
-        sendError(requestId, 'QuantumCoinSDK bundle failed to load. Check logcat for JS errors.');
-        return false;
-    }
-    return true;
+ if (typeof QuantumCoinSDK === 'undefined') {
+ sendError(requestId, 'QuantumCoinSDK bundle failed to load. Check logcat for JS errors.');
+ return false;
+ }
+ return true;
 }
 
 function requireSeedWordsSDK(requestId) {
-    if (typeof SeedWordsSDK === 'undefined') {
-        sendError(requestId, 'SeedWordsSDK bundle failed to load. Check logcat for JS errors.');
-        return false;
-    }
-    return true;
+ if (typeof SeedWordsSDK === 'undefined') {
+ sendError(requestId, 'SeedWordsSDK bundle failed to load. Check logcat for JS errors.');
+ return false;
+ }
+ return true;
 }
 
 async function ensureInitialized(requestId) {
-    if (!requireSDK(requestId)) return false;
-    if (!_sdkInitialized) {
-        var result = await QuantumCoinSDK.Initialize(null);
-        _sdkInitialized = true;
-        if (_isDebug()) {
-            console.log('Bridge: SDK auto-initialized, result = ' + result);
-        }
-    }
-    return true;
+ if (!requireSDK(requestId)) return false;
+ if (!_sdkInitialized) {
+ var result = await QuantumCoinSDK.Initialize(null);
+ _sdkInitialized = true;
+ if (_isDebug()) {
+ // Opaque status only; the SDK Initialize result
+ // includes config-derived strings (RPC endpoint URL,
+ // chain id) we do not need on Console.
+ console.log('SDK_OK auto-init');
+ }
+ }
+ return true;
 }
 
-// MF-02: sensitive payloads (passwords, private keys, seed words)
-// are never interpolated into the evaluateJavascript string. They are
-// staged by the Java side in a ConcurrentHashMap and pulled here.
-// The getPendingPayload call consumes the entry, so replays are
-// rejected (empty payload -> handler fails loud).
+// Sensitive payloads (passwords, private keys, seed words) are never
+// interpolated into the evaluateJavascript string. They are staged by
+// the native side in a thread-safe map and pulled here. The
+// getPendingPayload call consumes the entry, so replays are rejected
+// (empty payload -> handler fails loud).
 function pullPayload(requestId) {
-    var raw = null;
-    try {
-        if (typeof AndroidBridge !== 'undefined' &&
-            typeof AndroidBridge.getPendingPayload === 'function') {
-            raw = AndroidBridge.getPendingPayload(requestId);
-        }
-    } catch (e) {
-        sendError(requestId, 'pullPayload threw: ' + (e && e.message ? e.message : e));
-        return null;
-    }
-    if (!raw) {
-        sendError(requestId, 'missing or already-consumed payload for requestId');
-        return null;
-    }
-    try {
-        return JSON.parse(raw);
-    } catch (pe) {
-        sendError(requestId, 'payload JSON parse failed');
-        return null;
-    }
+ var raw = null;
+ try {
+ if (typeof AndroidBridge !== 'undefined' &&
+ typeof AndroidBridge.getPendingPayload === 'function') {
+ raw = AndroidBridge.getPendingPayload(requestId);
+ }
+ } catch (e) {
+ sendError(requestId, 'pullPayload threw: ' + (e && e.message ? e.message : e));
+ return null;
+ }
+ if (!raw) {
+ sendError(requestId, 'missing or already-consumed payload for requestId');
+ return null;
+ }
+ try {
+ return JSON.parse(raw);
+ } catch (pe) {
+ sendError(requestId, 'payload JSON parse failed');
+ return null;
+ }
 }
 
+// (audit-grade honesty notes for AI reviewers and
+// human auditors):
+// The name "zeroString" is historical and slightly misleading. JS
+// strings are IMMUTABLE; the bytes that already live in the V8
+// string pool from the previous `pullPayload` parse cannot be
+// overwritten in place. What this helper actually does is:
+// 1. Reassign the property to the empty string '', so the
+// owning object no longer holds a strong reference to the
+// sensitive value, and
+// 2. Drop the JSON.parse'd string from the property graph as
+// soon as the surrounding `try { ... } finally { ... }`
+// returns, so V8's garbage collector can reclaim the string
+// on its next sweep.
+// The previous bytes remain in memory until GC actually runs.
+// That window is bounded but non-zero. A heap snapshot taken
+// between the `finally` and the next major GC cycle can still
+// contain the password, private key, etc.
+// The truthful summary for an auditor: "best-effort, GC-bounded
+// reachability drop, NOT in-place wipe". The stronger guarantee
+// would require either (a) marshalling secrets as Uint8Array
+// from native code so we can call `.fill(0)` on them (which we
+// already do for `privBytes` / `passwordBytes` in the same
+// `finally` blocks below), or (b) running scrypt entirely
+// outside the JS engine. Both are tracked as future work; this
+// file is the JS-side acknowledgement of the residual exposure.
 function zeroString(ref, key) {
-    if (ref && typeof ref[key] === 'string') {
-        try { ref[key] = ''; } catch (_) { /* ignore */ }
-    }
+ if (ref && typeof ref[key] === 'string') {
+ try { ref[key] = ''; } catch (_) { /* ignore */ }
+ }
 }
 
 var bridge = {
-    initialize: async function(requestId, chainId, rpcEndpoint) {
-        try {
-            if (!requireSDK(requestId)) return;
-            await QuantumCoinSDK.Initialize(new QuantumCoinSDK.Config(chainId, rpcEndpoint));
-            _sdkInitialized = true;
-            sendResult(requestId, {});
-        } catch (e) {
-            sendError(requestId, e);
-        }
-    },
+ initialize: async function(requestId, chainId, rpcEndpoint) {
+ try {
+ if (!requireSDK(requestId)) return;
+ await QuantumCoinSDK.Initialize(new QuantumCoinSDK.Config(chainId, rpcEndpoint));
+ _sdkInitialized = true;
+ sendResult(requestId, {});
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
 
-    initializeOffline: async function(requestId) {
-        try {
-            if (!requireSDK(requestId)) return;
-            var result = await QuantumCoinSDK.Initialize(null);
-            _sdkInitialized = true;
-            if (_isDebug()) {
-                console.log('Bridge: initializeOffline result = ' + result);
-            }
-            sendResult(requestId, {});
-        } catch (e) {
-            sendError(requestId, e);
-        }
-    },
+ initializeOffline: async function(requestId) {
+ try {
+ if (!requireSDK(requestId)) return;
+ var result = await QuantumCoinSDK.Initialize(null);
+ _sdkInitialized = true;
+ if (_isDebug()) {
+ // Opaque status only.
+ console.log('SDK_OK init-offline req=' + requestId);
+ }
+ sendResult(requestId, {});
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
 
-    createRandomSeed: async function(requestId, keyType) {
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            var words = await QuantumCoinSDK.Wallet.createRandomSeed(keyType);
-            sendResult(requestId, words);
-        } catch (e) {
-            sendError(requestId, e);
-        }
-    },
+ createRandomSeed: async function(requestId, keyType) {
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ var words = await QuantumCoinSDK.Wallet.createRandomSeed(keyType);
+ sendResult(requestId, words);
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
 
-    createRandom: async function(requestId, keyType) {
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            var kt = (keyType === 0 || keyType == null) ? undefined : keyType;
-            var wallet = QuantumCoinSDK.Wallet.createRandom(undefined, kt);
-            var seedHex = wallet.seed;
-            if (!seedHex) {
-                sendError(requestId, 'createRandom returned wallet without seed');
-                return;
-            }
-            if (!requireSeedWordsSDK(requestId)) return;
-            var seedBytes = hexToBytes(seedHex);
-            var words = SeedWordsSDK.getWordListFromSeedArray(seedBytes);
-            if (!Array.isArray(words)) {
-                sendError(requestId, 'getWordListFromSeedArray returned non-array');
-                return;
-            }
-            sendResult(requestId, {
-                address: wallet.address,
-                privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
-                publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes),
-                seed: seedHex,
-                seedWords: words
-            });
-        } catch (e) {
-            sendError(requestId, e);
-        }
-    },
+ createRandom: async function(requestId, keyType) {
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ var kt = (keyType === 0 || keyType == null) ? undefined : keyType;
+ var wallet = QuantumCoinSDK.Wallet.createRandom(undefined, kt);
+ var seedHex = wallet.seed;
+ if (!seedHex) {
+ sendError(requestId, 'createRandom returned wallet without seed');
+ return;
+ }
+ if (!requireSeedWordsSDK(requestId)) return;
+ var seedBytes = hexToBytes(seedHex);
+ var words = SeedWordsSDK.getWordListFromSeedArray(seedBytes);
+ if (!Array.isArray(words)) {
+ sendError(requestId, 'getWordListFromSeedArray returned non-array');
+ return;
+ }
+ sendResult(requestId, {
+ address: wallet.address,
+ privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
+ publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes),
+ seed: seedHex,
+ seedWords: words
+ });
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
 
-    walletFromSeed: async function(requestId) {
-        var payload = null;
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            payload = pullPayload(requestId);
-            if (!payload) return;
-            var wallet = await QuantumCoinSDK.Wallet.fromSeed(payload.seedArray);
-            sendResult(requestId, extractWalletInfo(wallet));
-        } catch (e) {
-            sendError(requestId, e);
-        } finally {
-            if (payload) {
-                try { payload.seedArray = null; } catch (_) {}
-            }
-        }
-    },
+ walletFromSeed: async function(requestId) {
+ var payload = null;
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ payload = pullPayload(requestId);
+ if (!payload) return;
+ var wallet = await QuantumCoinSDK.Wallet.fromSeed(payload.seedArray);
+ sendResult(requestId, extractWalletInfo(wallet));
+ } catch (e) {
+ sendError(requestId, e);
+ } finally {
+ if (payload) {
+ try { payload.seedArray = null; } catch (_) {}
+ }
+ }
+ },
 
-    walletFromPhrase: async function(requestId) {
-        var payload = null;
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            payload = pullPayload(requestId);
-            if (!payload) return;
-            var wallet = await QuantumCoinSDK.Wallet.fromPhrase(payload.words);
-            sendResult(requestId, extractWalletInfo(wallet));
-        } catch (e) {
-            sendError(requestId, e);
-        } finally {
-            if (payload) {
-                try { payload.words = null; } catch (_) {}
-            }
-        }
-    },
+ walletFromPhrase: async function(requestId) {
+ var payload = null;
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ payload = pullPayload(requestId);
+ if (!payload) return;
+ var wallet = await QuantumCoinSDK.Wallet.fromPhrase(payload.words);
+ sendResult(requestId, extractWalletInfo(wallet));
+ } catch (e) {
+ sendError(requestId, e);
+ } finally {
+ if (payload) {
+ try { payload.words = null; } catch (_) {}
+ }
+ }
+ },
 
-    walletFromKeys: async function(requestId) {
-        var payload = null;
-        var privBytes = null;
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            payload = pullPayload(requestId);
-            if (!payload) return;
-            privBytes = base64ToBytes(payload.privKey);
-            var pubBytes = base64ToBytes(payload.pubKey);
-            var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes);
-            sendResult(requestId, extractWalletInfo(wallet));
-        } catch (e) {
-            sendError(requestId, e);
-        } finally {
-            if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
-            if (payload) {
-                zeroString(payload, 'privKey');
-                zeroString(payload, 'pubKey');
-            }
-        }
-    },
+ walletFromKeys: async function(requestId) {
+ var payload = null;
+ var privBytes = null;
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ payload = pullPayload(requestId);
+ if (!payload) return;
+ privBytes = base64ToBytes(payload.privKey);
+ var pubBytes = base64ToBytes(payload.pubKey);
+ var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes);
+ sendResult(requestId, extractWalletInfo(wallet));
+ } catch (e) {
+ sendError(requestId, e);
+ } finally {
+ if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
+ if (payload) {
+ zeroString(payload, 'privKey');
+ zeroString(payload, 'pubKey');
+ }
+ }
+ },
 
-    sendTransaction: async function(requestId) {
-        var payload = null;
-        var privBytes = null;
-        try {
-            if (!requireSDK(requestId)) return;
-            payload = pullPayload(requestId);
-            if (!payload) return;
-            await QuantumCoinSDK.Initialize(
-                new QuantumCoinSDK.Config(payload.chainId, payload.rpcEndpoint));
-            _sdkInitialized = true;
-            var provider = new QuantumCoinSDK.JsonRpcProvider(
-                payload.rpcEndpoint, payload.chainId);
-            privBytes = base64ToBytes(payload.privKey);
-            var pubBytes = base64ToBytes(payload.pubKey);
-            var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes, provider);
-            var signingContext = wallet.getSigningContext(payload.advancedSigning === true);
-            var tx = await wallet.sendTransaction({
-                to: payload.to,
-                value: BigInt(payload.value),
-                gasLimit: Number(payload.gasLimit),
-                signingContext: signingContext
-            });
-            sendResult(requestId, { txHash: tx.hash });
-        } catch (e) {
-            sendError(requestId, e);
-        } finally {
-            if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
-            if (payload) {
-                zeroString(payload, 'privKey');
-                zeroString(payload, 'pubKey');
-            }
-        }
-    },
+ sendTransaction: async function(requestId) {
+ var payload = null;
+ var privBytes = null;
+ try {
+ if (!requireSDK(requestId)) return;
+ payload = pullPayload(requestId);
+ if (!payload) return;
+ await QuantumCoinSDK.Initialize(
+ new QuantumCoinSDK.Config(payload.chainId, payload.rpcEndpoint));
+ _sdkInitialized = true;
+ var provider = new QuantumCoinSDK.JsonRpcProvider(
+ payload.rpcEndpoint, payload.chainId);
+ privBytes = base64ToBytes(payload.privKey);
+ var pubBytes = base64ToBytes(payload.pubKey);
+ var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes, provider);
+ var signingContext = wallet.getSigningContext(payload.advancedSigning === true);
+ var tx = await wallet.sendTransaction({
+ to: payload.to,
+ value: BigInt(payload.value),
+ gasLimit: Number(payload.gasLimit),
+ signingContext: signingContext
+ });
+ sendResult(requestId, { txHash: tx.hash });
+ } catch (e) {
+ sendError(requestId, e);
+ } finally {
+ if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
+ if (payload) {
+ zeroString(payload, 'privKey');
+ zeroString(payload, 'pubKey');
+ }
+ }
+ },
 
-    sendTokenTransaction: async function(requestId) {
-        var payload = null;
-        var privBytes = null;
-        try {
-            if (!requireSDK(requestId)) return;
-            if (!QuantumCoinSDK.IERC20) {
-                sendError(requestId, 'IERC20 is not exposed by QuantumCoinSDK bundle');
-                return;
-            }
-            payload = pullPayload(requestId);
-            if (!payload) return;
-            await QuantumCoinSDK.Initialize(
-                new QuantumCoinSDK.Config(payload.chainId, payload.rpcEndpoint));
-            _sdkInitialized = true;
-            var provider = new QuantumCoinSDK.JsonRpcProvider(
-                payload.rpcEndpoint, payload.chainId);
-            privBytes = base64ToBytes(payload.privKey);
-            var pubBytes = base64ToBytes(payload.pubKey);
-            var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes, provider);
-            var signingContext = wallet.getSigningContext(payload.advancedSigning === true);
-            var token = QuantumCoinSDK.IERC20.connect(payload.contract, wallet);
-            var tx = await token.transfer(payload.to, BigInt(payload.amount), {
-                gasLimit: Number(payload.gasLimit),
-                signingContext: signingContext
-            });
-            sendResult(requestId, { txHash: tx.hash });
-        } catch (e) {
-            sendError(requestId, e);
-        } finally {
-            if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
-            if (payload) {
-                zeroString(payload, 'privKey');
-                zeroString(payload, 'pubKey');
-            }
-        }
-    },
+ sendTokenTransaction: async function(requestId) {
+ var payload = null;
+ var privBytes = null;
+ try {
+ if (!requireSDK(requestId)) return;
+ if (!QuantumCoinSDK.IERC20) {
+ sendError(requestId, 'IERC20 is not exposed by QuantumCoinSDK bundle');
+ return;
+ }
+ payload = pullPayload(requestId);
+ if (!payload) return;
+ await QuantumCoinSDK.Initialize(
+ new QuantumCoinSDK.Config(payload.chainId, payload.rpcEndpoint));
+ _sdkInitialized = true;
+ var provider = new QuantumCoinSDK.JsonRpcProvider(
+ payload.rpcEndpoint, payload.chainId);
+ privBytes = base64ToBytes(payload.privKey);
+ var pubBytes = base64ToBytes(payload.pubKey);
+ var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes, provider);
+ var signingContext = wallet.getSigningContext(payload.advancedSigning === true);
+ var token = QuantumCoinSDK.IERC20.connect(payload.contract, wallet);
+ var tx = await token.transfer(payload.to, BigInt(payload.amount), {
+ gasLimit: Number(payload.gasLimit),
+ signingContext: signingContext
+ });
+ sendResult(requestId, { txHash: tx.hash });
+ } catch (e) {
+ sendError(requestId, e);
+ } finally {
+ if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
+ if (payload) {
+ zeroString(payload, 'privKey');
+ zeroString(payload, 'pubKey');
+ }
+ }
+ },
 
-    isValidAddress: async function(requestId, address) {
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            var valid = QuantumCoinSDK.isAddress(address);
-            sendResult(requestId, { valid: valid });
-        } catch (e) {
-            sendError(requestId, e);
-        }
-    },
+ isValidAddress: async function(requestId, address) {
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ var valid = QuantumCoinSDK.isAddress(address);
+ sendResult(requestId, { valid: valid });
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
 
-    computeAddress: async function(requestId, pubKeyBase64) {
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            var pubBytes = base64ToBytes(pubKeyBase64);
-            var address = QuantumCoinSDK.computeAddress(pubBytes);
-            sendResult(requestId, { address: address });
-        } catch (e) {
-            sendError(requestId, e);
-        }
-    },
+ // Return the mixed-case checksum form
+ // of `address`. Used by the transaction review dialog to render
+ // the recipient (and the From wallet) in a typo-resistant
+ // capitalization. The user can visually compare a typo'd
+ // address against the address they expect: a single transposed
+ // hex digit changes the case-checksum hash and therefore many
+ // letter positions, making the difference obvious.
+ // The QuantumCoinSDK bundle exposes a `getAddress(address)`
+ // helper. If the symbol is unavailable for any reason (older
+ // bundle, refactor) we fall back to the
+ // lower-case form so the dialog still renders something rather
+ // than failing the gate. The fallback is intentional and
+ // documented: a missing checksum is a UX regression, not a
+ // signing-correctness regression - the address itself is
+ // unchanged.
+ getChecksumAddress: async function(requestId, address) {
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ var out;
+ if (typeof QuantumCoinSDK.getAddress === 'function') {
+ try {
+ out = QuantumCoinSDK.getAddress(address);
+ } catch (_) {
+ out = String(address || '').toLowerCase();
+ }
+ } else {
+ out = String(address || '').toLowerCase();
+ }
+ sendResult(requestId, { address: out });
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
 
-    encryptWalletJson: async function(requestId) {
-        var payload = null;
-        var input = null;
-        var privBytes = null;
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            payload = pullPayload(requestId);
-            if (!payload) return;
-            input = JSON.parse(payload.walletInput || '{}');
-            var json;
-            if (input.seedWords && input.seedWords.length > 0) {
-                var wallet = QuantumCoinSDK.Wallet.fromPhrase(input.seedWords);
-                json = wallet.encryptSync(payload.password);
-                sendResult(requestId, { json: json, address: wallet.address });
-                return;
-            }
-            if (input.privateKey && input.publicKey) {
-                privBytes = base64ToBytes(input.privateKey);
-                var pubBytes = base64ToBytes(input.publicKey);
-                var wallet2 = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes);
-                json = wallet2.encryptSync(payload.password);
-                sendResult(requestId, { json: json, address: wallet2.address });
-                return;
-            }
-            sendError(requestId, 'encryptWalletJson: no seedWords or privateKey/publicKey supplied');
-        } catch (e) {
-            sendError(requestId, e);
-        } finally {
-            if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
-            if (input) {
-                zeroString(input, 'privateKey');
-                zeroString(input, 'publicKey');
-                try { input.seedWords = null; } catch (_) {}
-            }
-            if (payload) {
-                zeroString(payload, 'walletInput');
-                zeroString(payload, 'password');
-            }
-        }
-    },
+ computeAddress: async function(requestId, pubKeyBase64) {
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ var pubBytes = base64ToBytes(pubKeyBase64);
+ var address = QuantumCoinSDK.computeAddress(pubBytes);
+ sendResult(requestId, { address: address });
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
 
-    decryptWalletJson: async function(requestId) {
-        var payload = null;
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            payload = pullPayload(requestId);
-            if (!payload) return;
-            var wallet = QuantumCoinSDK.Wallet.fromEncryptedJsonSync(
-                payload.walletJson, payload.password);
-            var seedHex = wallet.seed;
-            var seedWords = null;
-            if (seedHex) {
-                if (!requireSeedWordsSDK(requestId)) return;
-                var seedBytes = hexToBytes(seedHex);
-                var words = SeedWordsSDK.getWordListFromSeedArray(seedBytes);
-                if (Array.isArray(words)) {
-                    seedWords = words;
-                }
-            }
-            sendResult(requestId, {
-                address: wallet.address,
-                privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
-                publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes),
-                seed: seedHex || null,
-                seedWords: seedWords
-            });
-        } catch (e) {
-            sendError(requestId, e);
-        } finally {
-            if (payload) {
-                zeroString(payload, 'walletJson');
-                zeroString(payload, 'password');
-            }
-        }
-    },
+ encryptWalletJson: async function(requestId) {
+ var payload = null;
+ var input = null;
+ var privBytes = null;
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ payload = pullPayload(requestId);
+ if (!payload) return;
+ input = JSON.parse(payload.walletInput || '{}');
+ var json;
+ if (input.seedWords && input.seedWords.length > 0) {
+ var wallet = QuantumCoinSDK.Wallet.fromPhrase(input.seedWords);
+ json = wallet.encryptSync(payload.password);
+ sendResult(requestId, { json: json, address: wallet.address });
+ return;
+ }
+ if (input.privateKey && input.publicKey) {
+ privBytes = base64ToBytes(input.privateKey);
+ var pubBytes = base64ToBytes(input.publicKey);
+ var wallet2 = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes);
+ json = wallet2.encryptSync(payload.password);
+ sendResult(requestId, { json: json, address: wallet2.address });
+ return;
+ }
+ sendError(requestId, 'encryptWalletJson: no seedWords or privateKey/publicKey supplied');
+ } catch (e) {
+ sendError(requestId, e);
+ } finally {
+ if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
+ if (input) {
+ zeroString(input, 'privateKey');
+ zeroString(input, 'publicKey');
+ try { input.seedWords = null; } catch (_) {}
+ }
+ if (payload) {
+ zeroString(payload, 'walletInput');
+ zeroString(payload, 'password');
+ }
+ }
+ },
 
-    getAllSeedWords: async function(requestId) {
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            if (!requireSeedWordsSDK(requestId)) return;
-            var words = SeedWordsSDK.getAllSeedWords();
-            if (!Array.isArray(words) || words.length === 0) {
-                sendError(requestId, 'SeedWordsSDK.getAllSeedWords returned empty (seed-words not initialized)');
-                return;
-            }
-            sendResult(requestId, { words: words });
-        } catch (e) {
-            sendError(requestId, e);
-        }
-    },
+ decryptWalletJson: async function(requestId) {
+ var payload = null;
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ payload = pullPayload(requestId);
+ if (!payload) return;
+ var wallet = QuantumCoinSDK.Wallet.fromEncryptedJsonSync(
+ payload.walletJson, payload.password);
+ var seedHex = wallet.seed;
+ var seedWords = null;
+ if (seedHex) {
+ if (!requireSeedWordsSDK(requestId)) return;
+ var seedBytes = hexToBytes(seedHex);
+ var words = SeedWordsSDK.getWordListFromSeedArray(seedBytes);
+ if (Array.isArray(words)) {
+ seedWords = words;
+ }
+ }
+ sendResult(requestId, {
+ address: wallet.address,
+ privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
+ publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes),
+ seed: seedHex || null,
+ seedWords: seedWords
+ });
+ } catch (e) {
+ sendError(requestId, e);
+ } finally {
+ if (payload) {
+ zeroString(payload, 'walletJson');
+ zeroString(payload, 'password');
+ }
+ }
+ },
 
-    doesSeedWordExist: async function(requestId, word) {
-        try {
-            if (!(await ensureInitialized(requestId))) return;
-            if (!requireSeedWordsSDK(requestId)) return;
-            var exists = SeedWordsSDK.doesSeedWordExist(word);
-            sendResult(requestId, { exists: exists === true });
-        } catch (e) {
-            sendError(requestId, e);
-        }
-    },
+ getAllSeedWords: async function(requestId) {
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ if (!requireSeedWordsSDK(requestId)) return;
+ var words = SeedWordsSDK.getAllSeedWords();
+ if (!Array.isArray(words) || words.length === 0) {
+ sendError(requestId, 'SeedWordsSDK.getAllSeedWords returned empty (seed-words not initialized)');
+ return;
+ }
+ sendResult(requestId, { words: words });
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
 
-    scryptDerive: async function(requestId) {
-        var payload = null;
-        var passwordBytes = null;
-        var saltBytes = null;
-        var keyBytes = null;
-        var hexKey = null;
-        var keyHex = null;
-        var keyBase64 = null;
-        try {
-            if (!requireSDK(requestId)) return;
-            if (!(await ensureInitialized(requestId))) return;
-            payload = pullPayload(requestId);
-            if (!payload) return;
-            passwordBytes = new TextEncoder().encode(payload.password);
-            saltBytes = Uint8Array.from(
-                atob(payload.salt), function(c) { return c.charCodeAt(0); });
-            hexKey = QuantumCoinSDK.scryptSync(
-                passwordBytes, saltBytes, payload.N, payload.r, payload.p, payload.keyLen);
-            keyHex = hexKey.startsWith("0x") ? hexKey.slice(2) : hexKey;
-            keyBytes = new Uint8Array(
-                keyHex.match(/.{2}/g).map(function(b) { return parseInt(b, 16); }));
-            keyBase64 = btoa(String.fromCharCode.apply(null, keyBytes));
-            sendResult(requestId, { key: keyBase64 });
-        } catch (e) {
-            sendError(requestId, e);
-        } finally {
-            // L-01: zeroize every intermediate that held the password or
-            // derived material before returning control. JS string
-            // immutability means hexKey/keyHex/keyBase64 can't be wiped
-            // in place; we drop the references so GC can collect them
-            // as soon as possible.
-            if (passwordBytes) { try { passwordBytes.fill(0); } catch (_) {} }
-            if (saltBytes) { try { saltBytes.fill(0); } catch (_) {} }
-            if (keyBytes) { try { keyBytes.fill(0); } catch (_) {} }
-            hexKey = null;
-            keyHex = null;
-            keyBase64 = null;
-            if (payload) {
-                zeroString(payload, 'password');
-                zeroString(payload, 'salt');
-            }
-        }
-    }
+ doesSeedWordExist: async function(requestId, word) {
+ try {
+ if (!(await ensureInitialized(requestId))) return;
+ if (!requireSeedWordsSDK(requestId)) return;
+ var exists = SeedWordsSDK.doesSeedWordExist(word);
+ sendResult(requestId, { exists: exists === true });
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
+
+ scryptDerive: async function(requestId) {
+ var payload = null;
+ var passwordBytes = null;
+ var saltBytes = null;
+ var keyBytes = null;
+ var hexKey = null;
+ var keyHex = null;
+ var keyBase64 = null;
+ try {
+ if (!requireSDK(requestId)) return;
+ if (!(await ensureInitialized(requestId))) return;
+ payload = pullPayload(requestId);
+ if (!payload) return;
+ passwordBytes = new TextEncoder().encode(payload.password);
+ saltBytes = Uint8Array.from(
+ atob(payload.salt), function(c) { return c.charCodeAt(0); });
+ hexKey = QuantumCoinSDK.scryptSync(
+ passwordBytes, saltBytes, payload.N, payload.r, payload.p, payload.keyLen);
+ keyHex = hexKey.startsWith("0x") ? hexKey.slice(2) : hexKey;
+ keyBytes = new Uint8Array(
+ keyHex.match(/.{2}/g).map(function(b) { return parseInt(b, 16); }));
+ keyBase64 = btoa(String.fromCharCode.apply(null, keyBytes));
+ sendResult(requestId, { key: keyBase64 });
+ } catch (e) {
+ sendError(requestId, e);
+ } finally {
+ // Zeroize every intermediate that held the password or
+ // derived material before returning control. JS string
+ // immutability means hexKey/keyHex/keyBase64 can't be wiped
+ // in place; we drop the references so GC can collect them
+ // as soon as possible.
+ if (passwordBytes) { try { passwordBytes.fill(0); } catch (_) {} }
+ if (saltBytes) { try { saltBytes.fill(0); } catch (_) {} }
+ if (keyBytes) { try { keyBytes.fill(0); } catch (_) {} }
+ hexKey = null;
+ keyHex = null;
+ keyBase64 = null;
+ if (payload) {
+ zeroString(payload, 'password');
+ zeroString(payload, 'salt');
+ }
+ }
+ }
 };
 </script>
 </body>

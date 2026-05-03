@@ -1,78 +1,123 @@
-//
-// PrefConnect.swift
-//
-// Mirror of `PrefConnect.java`. Stores everything in a single JSON file
-// at `Application Support/DP_QUANTUM_COIN_WALLET_APP_PREF.json`, which
-// is byte-compatible with the Android SharedPreferences XML once
-// exported via backup.
-//
-// Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/utils/PrefConnect.java
-//
-// The key names MUST match Android exactly so a `.wallet` backup blob
-// looked up by `SECURE_WALLET_0` keeps working after restore.
-//
+// PrefConnect.swift (Layer 1 - UI-pref storage primitive)
+// Lightweight JSON pref-file backing store for the small set of
+// flags the app needs to read BEFORE the user has typed their
+// password (and the strongbox is therefore still locked). Backed
+// by `Application Support/DP_QUANTUM_COIN_WALLET_APP_PREF.json`.
+// Why this exists (audit-grade notes for AI reviewers and human
+// auditors):
+// The wallet's authoritative state - addresses, encrypted seed
+// envelopes, custom networks, the user's "phone backup" /
+// "advanced signing" / "camera permission asked" flags - lives
+// in `Strongbox.shared` and is persisted via `AtomicSlotWriter`
+// under the v2 file codec. Strongbox content is encrypted under
+// a scrypt-derived key and never decryptable without the user's
+// password.
+// That gives us a chicken-and-egg problem for a small set of
+// facts the app needs to know AT BOOT, before the user has had
+// a chance to unlock:
+// - Whether the user has accepted the EULA (gate the splash).
+// - Which language to render the splash + unlock dialog in.
+// - Which blockchain network to bootstrap the JS bridge with
+// (the v2 strongbox holds the user's customised network
+// list, but the bundled MAINNET resource is the boot-time
+// default before the unlock has happened).
+// - The current-wallet pointer (so the wallets list opens to
+// the right row when the user unlocks). This is an INDEX
+// into the strongbox; on its own it tells an attacker no
+// more than "the user has at least one wallet", which the
+// presence of the slot file already tells them.
+// - The user's "phone backup" toggle, so we can apply
+// `isExcludedFromBackupKey` to the slot files BEFORE the
+// strongbox is unlocked (see BackupExclusion.swift).
+// - The user's "advanced signing" toggle, read pre-unlock by
+// transaction-review screens that need to render fee
+// defaults before any network call.
+// - The user's chosen iCloud Drive folder URI for `.wallet`
+// exports (bookmark resolution must run before the user
+// unlocks because the import / restore-from-cloud flows
+// happen pre-unlock on a fresh install).
+// - The "camera permission asked once" flag, used to gate
+// the system permission prompt that runs from the QR
+// picker entry on the Send screen.
+// Every other piece of wallet-meaningful state is FORBIDDEN in
+// this file. The invariant is enforced both by code review and
+// by the grep-style invariant test in `StrongboxLayerTests`.
+// In particular this file is NOT allowed to know about:
+// - Wallet addresses (those live in the encrypted strongbox).
+// - Encrypted seed envelopes.
+// - Custom blockchain networks.
+// - Any keys with prefixes `SECURE_*`, `WALLET_*` (other
+// than the explicit allowlist below), `MaxWalletIndex`,
+// `BLOCKCHAIN_NETWORK_LIST`, `INDEX_ADDRESS`,
+// `ADDRESS_INDEX`, or anything that would let a forensic
+// reader enumerate the user's wallet count or addresses
+// from the on-disk pref file alone.
+// Historical note: an earlier version of this file held the
+// v1 keystore (encrypted main key, encrypted strongbox blob,
+// plaintext address maps, plaintext network list). That
+// surface is gone; the v2 strongbox is the single source of
+// truth, and this file's API is restricted to the UI pref
+// allowlist above.
 
 import Foundation
 
+/// Allowlisted preference keys. A key NOT in this enum has no
+/// business in `PrefConnect` and any attempt to write one is a
+/// review-blocker. The grep-style invariant test in
+/// `StrongboxLayerTests` enforces the negative space (no
+/// `SECURE_*` / `WALLET_*` keys leak into this file).
 public enum PrefKeys {
-    public static let PREF_NAME                          = "DP_QUANTUM_COIN_WALLET_APP_PREF"
-    public static let MAX_WALLETS                        = 128
-    public static let MAX_WALLET_INDEX_KEY               = "MaxWalletIndex"
-    public static let WALLET_KEY_PREFIX                  = "WALLET_"
-    public static let WALLET_KEY_ADDRESS_INDEX           = "ADDRESS_INDEX"
-    public static let WALLET_KEY_INDEX_ADDRESS           = "INDEX_ADDRESS"
-    public static let WALLET_CURRENT_ADDRESS_INDEX_KEY   = "WALLET_CURRENT_ADDRESS_INDEX_KEY"
-    public static let BLOCKCHAIN_NETWORK_ID_INDEX_KEY    = "BLOCKCHAIN_NETWORK_ID_INDEX_KEY"
-    public static let BLOCKCHAIN_NETWORK_LIST            = "BLOCKCHAIN_NETWORK_LIST"
-    public static let ADVANCED_SIGNING_ENABLED_KEY       = "ADVANCED_SIGNING_ENABLED"
-    public static let BACKUP_ENABLED_KEY                 = "BACKUP_ENABLED"
-    public static let CLOUD_BACKUP_FOLDER_URI_KEY        = "CLOUD_BACKUP_FOLDER_URI"
-    public static let CAMERA_PERMISSION_ASKED_ONCE       = "CAMERA_PERMISSION_ASKED_ONCE"
-    public static let WALLET_HAS_SEED_KEY_PREFIX         = "WALLET_HAS_SEED_"
+    /// Wall-clock max wallets the strongbox is willing to host.
+    /// Used by `UnlockCoordinatorV2.appendWallet` and not a
+    /// preference per se; lives here so the Android-parity
+    /// constant has one home.
+    public static let MAX_WALLETS = 128
 
-    // SecureStorage keys (kept under `PrefKeys` so everything portable
-    // lives in one place):
-    public static let SECURE_DERIVED_KEY_SALT            = "SECURE_DERIVED_KEY_SALT"
-    public static let SECURE_ENCRYPTED_MAIN_KEY          = "SECURE_ENCRYPTED_MAIN_KEY"
-    public static let SECURE_MAX_WALLET_INDEX            = "SECURE_MAX_WALLET_INDEX"
-    public static let SECURE_WALLET_PREFIX               = "SECURE_WALLET_"
-    /// Legacy key (pre-vault-blob): AES-GCM(mainKey, JSON({"<idx>":"<address>"})).
-    /// Kept only so the migration inside `KeyStore.unlock` can read its
-    /// contents on the first launch after upgrade and fold them into the
-    /// new combined `SECURE_VAULT_BLOB` below. Once the privacy
-    /// migration completes the entry is deleted.
-    public static let SECURE_ADDRESS_INDEX_MAP           = "SECURE_ADDRESS_INDEX_MAP"
-    /// AES-GCM(mainKey, JSON({"v":1,"addresses":{...},"networks":[...],"activeNetworkIndex":N})).
-    /// Single decrypt per unlock recovers everything the UI needs:
-    /// address index map plus user-added blockchain networks plus the
-    /// selected active-network offset. The bundled `MAINNET` from
-    /// `Resources/blockchain_networks.json` is NOT stored here - it is
-    /// re-prepended on every `applyDecryptedConfig` call so the resource
-    /// remains the canonical source for the default chain config.
-    public static let SECURE_VAULT_BLOB                  = "SECURE_VAULT_BLOB"
-    /// One-shot migration flag. When `true`, the legacy plaintext
-    /// `INDEX_ADDRESS` / `ADDRESS_INDEX` / `BLOCKCHAIN_NETWORK_LIST` /
-    /// `BLOCKCHAIN_NETWORK_ID_INDEX_KEY` entries have been deleted from
-    /// the JSON pref file (their contents now live only inside the
-    /// encrypted `SECURE_VAULT_BLOB`), and the legacy
-    /// `SECURE_ADDRESS_INDEX_MAP` blob has been removed.
-    public static let PREFS_PRIVACY_MIGRATION_V1         = "PREFS_PRIVACY_MIGRATION_V1"
+    // MARK: - UI / boot prefs (all readable PRE-unlock)
+
+    /// Has the user accepted the EULA on first launch?
+    public static let EULA_ACCEPTED = "EULA_ACCEPTED"
+    /// User-chosen UI language code (e.g. `"en_us"`).
+    public static let LANGUAGE_CODE = "LANGUAGE_CODE"
+
+    /// Currently-selected wallet index. An integer offset into
+    /// the strongbox `wallets` array, NOT an address.
+    public static let WALLET_CURRENT_ADDRESS_INDEX_KEY = "WALLET_CURRENT_ADDRESS_INDEX_KEY"
+
+    /// Boot-time blockchain network selection. The bundled
+    /// MAINNET network is loaded from
+    /// `Resources/blockchain_networks.json`; this pref records
+    /// which entry in that bundled list (or, post-unlock, in
+    /// the user's customised list) is the active one.
+    public static let BLOCKCHAIN_NETWORK_ID_INDEX_KEY = "BLOCKCHAIN_NETWORK_ID_INDEX_KEY"
+
+    /// User-chosen iCloud Drive folder URI for `.wallet`
+    /// exports. Bookmark-resolved by `CloudBackupManager`.
+    public static let CLOUD_BACKUP_FOLDER_URI_KEY = "CLOUD_BACKUP_FOLDER_URI"
+
+    /// User toggle: include strongbox slot files in iCloud
+    /// Backup / unencrypted Finder backups? Read pre-unlock by
+    /// `BackupExclusion.applyToStrongboxFiles` so the file-
+    /// resource flag can be re-applied before the user unlocks.
+    public static let BACKUP_ENABLED_KEY = "BACKUP_ENABLED"
+
+    /// User toggle: bump the gas price 30x for "fast inclusion"
+    /// signing. Read pre-unlock by the transaction-review
+    /// screen so the displayed fee matches what will be signed.
+    public static let ADVANCED_SIGNING_ENABLED_KEY = "ADVANCED_SIGNING_ENABLED"
+
+    /// One-shot flag set after the camera permission prompt has
+    /// been shown to the user. Lets the Send screen's QR entry
+    /// distinguish "first-time prompt" from "user previously
+    /// declined" (UI copy differs).
+    public static let CAMERA_PERMISSION_ASKED_ONCE = "CAMERA_PERMISSION_ASKED_ONCE"
 }
 
 public final class PrefConnect {
 
-    // MARK: - Singleton + in-memory mirror
+    // MARK: - Singleton
 
     public static let shared = PrefConnect()
-
-    /// In-memory caches that match the Android static fields:
-    ///   `WALLET_ADDRESS_TO_INDEX_MAP` / `WALLET_INDEX_TO_ADDRESS_MAP`.
-    public var walletAddressToIndex: [String: String] = [:]
-    public var walletIndexToAddress: [String: String] = [:]
-    public var walletAddressToIndexLoaded: Bool = false
-    public var walletCurrentAddressIndexValue: String = "0"
-    public var walletIndexHasSeed: [String: Bool] = [:]
 
     // MARK: - Storage
 
@@ -83,10 +128,10 @@ public final class PrefConnect {
     private init() {
         let fm = FileManager.default
         let support = try! fm.url(for: .applicationSupportDirectory,
-                                  in: .userDomainMask, appropriateFor: nil, create: true)
-        self.fileURL = support.appendingPathComponent("\(PrefKeys.PREF_NAME).json")
+            in: .userDomainMask, appropriateFor: nil, create: true)
+        self.fileURL = support.appendingPathComponent("DP_QUANTUM_COIN_WALLET_APP_PREF.json")
         if let data = try? Data(contentsOf: fileURL),
-           let obj  = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             self.memo = obj
         } else {
             self.memo = [:]
@@ -127,9 +172,8 @@ public final class PrefConnect {
         queue.sync { memo.removeValue(forKey: key); flushLocked() }
     }
 
-    /// Remove `key` only if it exists. Avoids a flush when the key is
-    /// already absent (relevant for the privacy migration which runs on
-    /// every launch but only has work to do once).
+    /// Remove `key` only if it exists. Avoids a flush when the key
+    /// is already absent.
     @discardableResult
     public func removeIfPresent(_ key: String) -> Bool {
         queue.sync {
@@ -148,73 +192,6 @@ public final class PrefConnect {
         queue.sync { memo.removeAll(); flushLocked() }
     }
 
-    // MARK: - Privacy migration
-
-    /// One-shot migration: delete every plaintext on-disk pref that the
-    /// encrypted `SECURE_VAULT_BLOB` now subsumes (legacy address maps
-    /// and the legacy plaintext blockchain network list / active-index
-    /// keys), plus the legacy intermediate `SECURE_ADDRESS_INDEX_MAP`
-    /// blob. Run at every launch; idempotent and only completes (sets
-    /// `PREFS_PRIVACY_MIGRATION_V1`) AFTER `SECURE_VAULT_BLOB` is in
-    /// place so we never wipe the only remaining copy of the data.
-    ///
-    /// Sequencing for an upgrading user:
-    ///   - Launch 1: legacy plaintext entries present, vault blob
-    ///     absent. Migration is a no-op (no blob yet). After the user
-    ///     unlocks, `KeyStore.rebuildVaultState` reads the legacy
-    ///     plaintext map / network prefs / `SECURE_ADDRESS_INDEX_MAP`
-    ///     blob and writes the new combined `SECURE_VAULT_BLOB`.
-    ///   - Launch 2 (same session, post-unlock): vault blob present.
-    ///     Migration deletes the plaintext copies + the legacy
-    ///     `SECURE_ADDRESS_INDEX_MAP` blob and sets the flag.
-    ///   - Launch 3+: flag set, migration short-circuits.
-    ///
-    /// Safe to call from any thread.
-    public func runPrivacyMigrationV1IfNeeded() {
-        if readBool(PrefKeys.PREFS_PRIVACY_MIGRATION_V1, default: false) { return }
-        // Only delete the plaintext entries after the vault blob has
-        // been produced - otherwise we'd lose the only remaining copy
-        // of the address rows / network customisations on the very
-        // first launch after upgrade (before the user has had a chance
-        // to unlock).
-        let blob = readString(PrefKeys.SECURE_VAULT_BLOB, default: "")
-        guard !blob.isEmpty else { return }
-
-        var changed = false
-        if removeIfPresent(PrefKeys.WALLET_KEY_INDEX_ADDRESS)        { changed = true }
-        if removeIfPresent(PrefKeys.WALLET_KEY_ADDRESS_INDEX)        { changed = true }
-        if removeIfPresent(PrefKeys.BLOCKCHAIN_NETWORK_LIST)         { changed = true }
-        if removeIfPresent(PrefKeys.BLOCKCHAIN_NETWORK_ID_INDEX_KEY) { changed = true }
-        // The legacy address-only blob is the *previous* shape of the
-        // same data the vault blob now encodes. Once the new combined
-        // blob has been written we can drop the predecessor.
-        if removeIfPresent(PrefKeys.SECURE_ADDRESS_INDEX_MAP)        { changed = true }
-        writeBool(PrefKeys.PREFS_PRIVACY_MIGRATION_V1, true)
-        // The in-memory mirrors lived alongside the on-disk maps for
-        // legacy callers; clear them so a stale process doesn't keep
-        // serving plaintext addresses post-migration.
-        if changed {
-            walletAddressToIndex.removeAll()
-            walletIndexToAddress.removeAll()
-        }
-    }
-
-    // MARK: - Map helpers (Android saveHasMap / loadHashMap)
-
-    public func writeMap(_ key: String, _ map: [String: String]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: map),
-              let json = String(data: data, encoding: .utf8) else { return }
-        writeString(key, json)
-    }
-
-    public func readMap(_ key: String) -> [String: String] {
-        let raw = readString(key, default: "")
-        guard !raw.isEmpty, let data = raw.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: String]
-        else { return [:] }
-        return obj
-    }
-
     // MARK: - Internal
 
     private func flushLocked() {
@@ -222,11 +199,14 @@ public final class PrefConnect {
             let data = try JSONSerialization.data(withJSONObject: memo, options: [.sortedKeys, .prettyPrinted])
             try data.write(to: fileURL, options: [.atomic])
         } catch {
-            // Failing to write is surfaced on next launch as data loss;
-            // we prefer that to silently crashing in the middle of UX.
-            #if DEBUG
-            print("PrefConnect flush failed: \(error)")
-            #endif
+            // Failing to write is surfaced on next launch as data
+            // loss; we prefer that to silently crashing in the
+            // middle of UX. Routed through `Logger.debug` so any
+            // sensitive substring inside the underlying NSError
+            // gets redacted before it reaches Console.app, and so
+            // the entire emission compiles out in Release.
+            Logger.debug(category: "PREFS_FLUSH_FAIL",
+                "flush failed: \(error)")
         }
     }
 }

@@ -1,37 +1,29 @@
-//
 // PillButton.swift
-//
 // Shared rounded "pill" buttons used by the seed-quiz Next button,
 // the network-select dialog, and any future surface that wants to
 // match the Android primary / secondary action button shape.
-//
 // `GreenPillButton` is the purple `#7d44aa` primary action mirroring
 // Android `drawable/button_green_shadow.xml` (the drawable is named
 // "green" but is actually purple in the theme).
-//
 // `GrayPillButton` is the secondary action mirroring Android's
 // `drawable/button_gray_shadow.xml` (used for `Cancel` in dialogs).
-//
 // Both classes share an identical pill geometry (corner radius 16,
 // inset content edges, bold 16pt title, white title colour) so they
 // line up cleanly when placed side-by-side in a `.fillEqually`
 // `UIStackView`.
-//
 // Both classes also carry the same drop shadow style as the
 // home-screen Send / Receive cards (see `ChromeViews.swift` line
 // 370 and `ShapeFactory.swift` line 54). Because the shadow has to
 // render outside the button bounds, neither class clips to its
-// layer. `applyStyle()` sets the shadow values; `layoutSubviews()`
+// layer. `applyStyle` sets the shadow values; `layoutSubviews`
 // re-applies them and refreshes the `shadowPath` so the shadow
 // stays in sync if a hosting screen rebuilds its layout (and so
 // the shadow is restored even if `init(frame:)` was somehow not
 // the route used to construct the button -- belt-and-braces against
 // `UIButton(type:)`'s historically quirky initializer dispatch).
-//
 // Android reference:
-//   app/src/main/res/drawable/button_green_shadow.xml
-//   app/src/main/res/drawable/button_gray_shadow.xml
-//
+// app/src/main/res/drawable/button_green_shadow.xml
+// app/src/main/res/drawable/button_gray_shadow.xml
 
 import UIKit
 
@@ -105,9 +97,9 @@ public final class GrayPillButton: UIButton {
 }
 
 /// Apply the shared pill-button drop shadow. Pulled into a free
-/// function so both `GreenPillButton.applyStyle()` /
-/// `layoutSubviews()` and `GrayPillButton.applyStyle()` /
-/// `layoutSubviews()` use the exact same parameters and refresh the
+/// function so both `GreenPillButton.applyStyle` /
+/// `layoutSubviews` and `GrayPillButton.applyStyle` /
+/// `layoutSubviews` use the exact same parameters and refresh the
 /// shadowPath whenever the layer's bounds change. Slightly heavier
 /// than the Send / Receive `colorCardA/B` cards (which carry their
 /// own shadow at opacity 0.20) so the smaller pill silhouette still

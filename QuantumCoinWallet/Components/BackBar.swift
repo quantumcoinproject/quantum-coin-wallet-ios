@@ -1,17 +1,13 @@
-//
 // BackBar.swift
-//
 // Shared 44pt-tall back-arrow row used at the top of secondary
 // screens (Networks, Add Network, Settings, etc.). Promoted out of
 // `BlockchainNetworkViewController.swift` so any UIViewController
 // that needs the same chrome can call `makeBackBar(action:)` without
 // re-implementing the same image button + spacer pattern.
-//
 // Visual + tap behaviour mirror Android `imageButton_*_back_arrow`:
 // 32x32 templated `arrow_back_circle_outline` tinted to
 // `colorCommon6`, with a leading position and a flexible spacer so
 // any title text added to the same row trails to the right.
-//
 
 import UIKit
 
@@ -30,7 +26,7 @@ internal extension UIViewController {
     /// refresh sit side by side with a flexible spacer trailing.
     /// `backAction` and `refreshAction` selectors target `self`.
     func makeBackBar(backAction: Selector,
-                     refreshAction: Selector?) -> UIView {
+        refreshAction: Selector?) -> UIView {
         let row = UIStackView()
         row.axis = .horizontal
         row.alignment = .center
@@ -60,7 +56,7 @@ internal extension UIViewController {
     private func makeChromeImageButton(named: String, action: Selector) -> UIButton {
         let b = UIButton(type: .custom)
         let img = UIImage(named: named)?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         b.setImage(img, for: .normal)
         b.tintColor = UIColor(named: "colorCommon6") ?? .label
         b.adjustsImageWhenHighlighted = true

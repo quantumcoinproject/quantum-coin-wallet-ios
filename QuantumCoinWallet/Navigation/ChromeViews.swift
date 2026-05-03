@@ -1,16 +1,12 @@
-//
 // ChromeViews.swift
-//
 // Top banner + center strip + bottom nav + offline overlay chrome
 // views used by `HomeViewController`. Port the exact visual layout of
 // `home_activity.xml` and the banner background from
 // `drawable-v24/gradient_layer.xml`.
-//
 // Android reference:
-//   app/src/main/res/layout/home_activity.xml
-//   app/src/main/res/drawable-v24/gradient_layer.xml
-//   app/src/main/res/layout/retry_layout.xml
-//
+// app/src/main/res/layout/home_activity.xml
+// app/src/main/res/drawable-v24/gradient_layer.xml
+// app/src/main/res/layout/retry_layout.xml
 
 import UIKit
 
@@ -59,7 +55,7 @@ public final class TopBannerView: UIView {
     /// XML is a no-op for `CAGradientLayer` and is dropped here.
     private func installGradient() {
         gradient.startPoint = CGPoint(x: 0, y: 0.5)
-        gradient.endPoint   = CGPoint(x: 1, y: 0.5)
+        gradient.endPoint = CGPoint(x: 1, y: 0.5)
         gradient.colors = [
             UIColor(argbHex: 0x80421096).cgColor,
             UIColor(argbHex: 0x4059D6F2).cgColor,
@@ -103,31 +99,31 @@ public final class TopBannerView: UIView {
         titleBottom.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
-            // Pin to the banner's *safe-area* top, not its raw top
-            // edge: the parent view controller now anchors `TopBannerView`
-            // to `view.topAnchor` so the gradient bleeds under the
-            // notch / status bar, but the logo + title + network chip
-            // must still live below the system UI to avoid being clipped.
-            // `safeAreaLayoutGuide` correctly gives us the inset on
-            // notched / Dynamic-Island devices and collapses to the raw
-            // top anchor on landscape / iPad split where there is no
-            // status bar.
-            logoView.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8),
-            logoView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            logoView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            logoView.heightAnchor.constraint(equalToConstant: 50),
+                // Pin to the banner's *safe-area* top, not its raw top
+                // edge: the parent view controller now anchors `TopBannerView`
+                // to `view.topAnchor` so the gradient bleeds under the
+                // notch / status bar, but the logo + title + network chip
+                // must still live below the system UI to avoid being clipped.
+                // `safeAreaLayoutGuide` correctly gives us the inset on
+                // notched / Dynamic-Island devices and collapses to the raw
+                // top anchor on landscape / iPad split where there is no
+                // status bar.
+                logoView.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8),
+                logoView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                logoView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                logoView.heightAnchor.constraint(equalToConstant: 50),
 
-            titleLabel.topAnchor.constraint(equalTo: logoView.bottomAnchor, constant: 2),
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            titleBottom,
+                titleLabel.topAnchor.constraint(equalTo: logoView.bottomAnchor, constant: 2),
+                titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+                titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+                titleBottom,
 
-            // Network-chip slot in the top-right corner. The controller
-            // installs its own button via `setNetworkChipView(_:)` and
-            // pins it to the container edges - we just reserve the slot.
-            networkChipContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 4),
-            networkChipContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
-        ])
+                // Network-chip slot in the top-right corner. The controller
+                // installs its own button via `setNetworkChipView(_:)` and
+                // pins it to the container edges - we just reserve the slot.
+                networkChipContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 4),
+                networkChipContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
+            ])
     }
 
     /// Update the banner's height in points. Pass `0` to collapse.
@@ -144,11 +140,11 @@ public final class TopBannerView: UIView {
         networkChipContainer.subviews.forEach { $0.removeFromSuperview() }
         networkChipContainer.addSubview(chip)
         NSLayoutConstraint.activate([
-            chip.topAnchor.constraint(equalTo: networkChipContainer.topAnchor),
-            chip.bottomAnchor.constraint(equalTo: networkChipContainer.bottomAnchor),
-            chip.leadingAnchor.constraint(equalTo: networkChipContainer.leadingAnchor),
-            chip.trailingAnchor.constraint(equalTo: networkChipContainer.trailingAnchor)
-        ])
+                chip.topAnchor.constraint(equalTo: networkChipContainer.topAnchor),
+                chip.bottomAnchor.constraint(equalTo: networkChipContainer.bottomAnchor),
+                chip.leadingAnchor.constraint(equalTo: networkChipContainer.leadingAnchor),
+                chip.trailingAnchor.constraint(equalTo: networkChipContainer.trailingAnchor)
+            ])
     }
 }
 
@@ -160,8 +156,8 @@ fileprivate extension UIColor {
     convenience init(argbHex: UInt32) {
         let a = CGFloat((argbHex >> 24) & 0xFF) / 255.0
         let r = CGFloat((argbHex >> 16) & 0xFF) / 255.0
-        let g = CGFloat((argbHex >>  8) & 0xFF) / 255.0
-        let b = CGFloat( argbHex        & 0xFF) / 255.0
+        let g = CGFloat((argbHex >> 8) & 0xFF) / 255.0
+        let b = CGFloat( argbHex & 0xFF) / 255.0
         self.init(red: r, green: g, blue: b, alpha: a)
     }
 }
@@ -170,12 +166,11 @@ fileprivate extension UIColor {
 
 /// Mirrors Android `home_activity.xml` (lines 125-280). Layout from top
 /// to bottom is:
-///
-///   1. Centered, multi-line address label (numberOfLines=2, bold 16pt).
-///   2. Centered horizontal icon row: copy / block-explorer / refresh.
-///   3. Bold balance label + spinner.
-///   4. Three colored card buttons: Send (#FFB400), Receive (#1DCC70),
-///      Transactions (#55D0F0). Icon stacked above title.
+/// 1. Centered, multi-line address label (numberOfLines=2, bold 16pt).
+/// 2. Centered horizontal icon row: copy / block-explorer / refresh.
+/// 3. Bold balance label + spinner.
+/// 4. Three colored card buttons: Send (#FFB400), Receive (#1DCC70),
+/// Transactions (#55D0F0). Icon stacked above title.
 public final class CenterStripView: UIView {
 
     public var onSend: (() -> Void)?
@@ -216,17 +211,17 @@ public final class CenterStripView: UIView {
         // with a tightly-cropped viewBox (matching copy / explore),
         // a uniform 5pt inset keeps all three icons visually equal.
         configureIcon(copyButton, image: "copy_outline",
-                      inset: 5, action: #selector(tapCopy))
+            inset: 5, action: #selector(tapCopy))
         configureIcon(exploreButton, image: "address_explore",
-                      inset: 5, action: #selector(tapExplore))
+            inset: 5, action: #selector(tapExplore))
         configureIcon(refreshButton, image: "retry",
-                      inset: 5, action: #selector(tapRefresh))
+            inset: 5, action: #selector(tapRefresh))
 
         // Center the three address-action icons in their own horizontal
         // stack mirroring Android `home_activity.xml:136-200`.
         let iconRow = UIStackView(arrangedSubviews: [copyButton,
-                                                     exploreButton,
-                                                     refreshButton])
+                exploreButton,
+                refreshButton])
         iconRow.axis = .horizontal
         iconRow.spacing = 24
         iconRow.alignment = .center
@@ -238,13 +233,13 @@ public final class CenterStripView: UIView {
         // home_activity.xml:232-238 (1dp tall, 20dp top/bottom margin).
         let balanceRule = UIView()
         balanceRule.backgroundColor = (UIColor(named: "colorCommon6") ?? .label)
-            .withAlphaComponent(0.2)
+        .withAlphaComponent(0.2)
         balanceRule.translatesAutoresizingMaskIntoConstraints = false
         balanceRule.heightAnchor.constraint(equalToConstant: 1).isActive = true
 
         let stack = UIStackView(arrangedSubviews: [
-            addressLabel, iconRow, balanceLabel, progress, balanceRule, cardRow
-        ])
+                addressLabel, iconRow, balanceLabel, progress, balanceRule, cardRow
+            ])
         stack.axis = .vertical
         stack.alignment = .center
         stack.spacing = 8
@@ -255,26 +250,26 @@ public final class CenterStripView: UIView {
         stack.setCustomSpacing(20, after: progress)
         stack.setCustomSpacing(20, after: balanceRule)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+                stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+                stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
 
-            // Address fills the strip width so it can wrap to two lines
-            // with center alignment, matching Android's `match_parent`.
-            addressLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
-            addressLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+                // Address fills the strip width so it can wrap to two lines
+                // with center alignment, matching Android's `match_parent`.
+                addressLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+                addressLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
 
-            // The stack uses .center alignment, which collapses a
-            // zero-intrinsic-width view to nothing. Pin the rule's
-            // width to the stack so it stretches edge-to-edge.
-            balanceRule.widthAnchor.constraint(equalTo: stack.widthAnchor),
+                // The stack uses .center alignment, which collapses a
+                // zero-intrinsic-width view to nothing. Pin the rule's
+                // width to the stack so it stretches edge-to-edge.
+                balanceRule.widthAnchor.constraint(equalTo: stack.widthAnchor),
 
-            // Card row also fills the strip width so the three cards can
-            // size equally with the spacing reserved between them.
-            cardRow.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
-            cardRow.trailingAnchor.constraint(equalTo: stack.trailingAnchor)
-        ])
+                // Card row also fills the strip width so the three cards can
+                // size equally with the spacing reserved between them.
+                cardRow.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+                cardRow.trailingAnchor.constraint(equalTo: stack.trailingAnchor)
+            ])
 
         // Uniform press feedback (alpha-dim) on every tappable surface
         // inside the strip - the three address-action icons and the
@@ -289,19 +284,20 @@ public final class CenterStripView: UIView {
     }
 
     @objc private func tapCopy() {
-        UIPasteboard.general.string = currentAddress
+        // Address-strip copy. Hardened wrapper.
+        Pasteboard.copySensitive(currentAddress)
         Toast.showMessage(Localization.shared.getCopiedByLangValues())
     }
-    @objc private func tapExplore()       { onExploreAddress?() }
-    @objc private func tapRefresh()       { onRefresh?() }
-    @objc private func tapSend()          { onSend?() }
-    @objc private func tapReceive()       { onReceive?() }
-    @objc private func tapTransactions()  { onTransactions?() }
+    @objc private func tapExplore() { onExploreAddress?() }
+    @objc private func tapRefresh() { onRefresh?() }
+    @objc private func tapSend() { onSend?() }
+    @objc private func tapReceive() { onReceive?() }
+    @objc private func tapTransactions() { onTransactions?() }
 
     private func configureIcon(_ b: UIButton,
-                               image name: String,
-                               inset: CGFloat,
-                               action: Selector) {
+        image name: String,
+        inset: CGFloat,
+        action: Selector) {
         let img = UIImage(named: name)?.withRenderingMode(.alwaysTemplate)
         b.setImage(img, for: .normal)
         // `.label` is the system-managed dynamic primary content
@@ -316,13 +312,13 @@ public final class CenterStripView: UIView {
         // more inherent whitespace than the other PDFs) renders
         // visually smaller than copy / explore inside the same frame.
         b.contentEdgeInsets = UIEdgeInsets(top: inset, left: inset,
-                                           bottom: inset, right: inset)
+            bottom: inset, right: inset)
         b.addTarget(self, action: action, for: .touchUpInside)
         b.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            b.widthAnchor.constraint(equalToConstant: 40),
-            b.heightAnchor.constraint(equalToConstant: 40)
-        ])
+                b.widthAnchor.constraint(equalToConstant: 40),
+                b.heightAnchor.constraint(equalToConstant: 40)
+            ])
     }
 
     /// Send / Receive / Transactions colored card buttons. Mirrors
@@ -355,9 +351,9 @@ public final class CenterStripView: UIView {
     /// Vertical card: 64x64 colored rounded rectangle hosting a white
     /// SF symbol, with the text label below in `colorCommon1`.
     private func makeCardActionButton(icon: String,
-                                      bg: UIColor,
-                                      title: String,
-                                      action: Selector) -> UIView {
+        bg: UIColor,
+        title: String,
+        action: Selector) -> UIView {
         let card = UIControl()
         card.backgroundColor = bg
         card.layer.cornerRadius = 12
@@ -385,13 +381,13 @@ public final class CenterStripView: UIView {
         iv.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(iv)
         NSLayoutConstraint.activate([
-            card.heightAnchor.constraint(equalToConstant: 64),
-            card.widthAnchor.constraint(equalToConstant: 64),
-            iv.widthAnchor.constraint(equalToConstant: 28),
-            iv.heightAnchor.constraint(equalToConstant: 28),
-            iv.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            iv.centerYAnchor.constraint(equalTo: card.centerYAnchor)
-        ])
+                card.heightAnchor.constraint(equalToConstant: 64),
+                card.widthAnchor.constraint(equalToConstant: 64),
+                iv.widthAnchor.constraint(equalToConstant: 28),
+                iv.heightAnchor.constraint(equalToConstant: 28),
+                iv.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+                iv.centerYAnchor.constraint(equalTo: card.centerYAnchor)
+            ])
 
         let label = UILabel()
         label.text = title
@@ -419,7 +415,7 @@ public final class OfflineOverlayView: UIView {
     public override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = UIColor(named: "colorBackground")?.withAlphaComponent(0.97)
-            ?? UIColor.systemBackground.withAlphaComponent(0.97)
+        ?? UIColor.systemBackground.withAlphaComponent(0.97)
         label.font = Typography.body(14)
         label.textAlignment = .center
         label.numberOfLines = 0
@@ -433,10 +429,10 @@ public final class OfflineOverlayView: UIView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24)
-        ])
+                stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+                stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 24),
+                stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -24)
+            ])
         isHidden = true
 
         installPressFeedbackRecursive()
@@ -481,12 +477,12 @@ public final class BottomNavView: UIView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            heightAnchor.constraint(equalToConstant: 56)
-        ])
+                stack.topAnchor.constraint(equalTo: topAnchor),
+                stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+                stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+                stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+                heightAnchor.constraint(equalToConstant: 56)
+            ])
 
         // Apply alpha-dim press feedback to all four tab UIControls.
         installPressFeedbackRecursive()
@@ -527,29 +523,29 @@ public final class BottomNavView: UIView {
         tab.addSubview(column)
 
         NSLayoutConstraint.activate([
-            iv.widthAnchor.constraint(equalToConstant: 24),
-            iv.heightAnchor.constraint(equalToConstant: 24),
-            column.centerXAnchor.constraint(equalTo: tab.centerXAnchor),
-            column.centerYAnchor.constraint(equalTo: tab.centerYAnchor),
-            column.leadingAnchor.constraint(
-                greaterThanOrEqualTo: tab.leadingAnchor, constant: 4),
-            column.trailingAnchor.constraint(
-                lessThanOrEqualTo: tab.trailingAnchor, constant: -4)
-        ])
+                iv.widthAnchor.constraint(equalToConstant: 24),
+                iv.heightAnchor.constraint(equalToConstant: 24),
+                column.centerXAnchor.constraint(equalTo: tab.centerXAnchor),
+                column.centerYAnchor.constraint(equalTo: tab.centerYAnchor),
+                column.leadingAnchor.constraint(
+                    greaterThanOrEqualTo: tab.leadingAnchor, constant: 4),
+                column.trailingAnchor.constraint(
+                    lessThanOrEqualTo: tab.trailingAnchor, constant: -4)
+            ])
 
-        tab.addAction(UIAction { [weak self] _ in
-            self?.dispatchTap(tag: tag)
-        }, for: .touchUpInside)
+        tab.addAction(UIAction(handler: { [weak self] _ in
+                self?.dispatchTap(tag: tag)
+            }), for: .touchUpInside)
         return tab
     }
 
     private func dispatchTap(tag: Int) {
         let tab: Tab
         switch tag {
-        case 0: tab = .wallets
-        case 1: tab = .help
-        case 2: tab = .blockExplorer
-        default: tab = .settings
+            case 0: tab = .wallets
+            case 1: tab = .help
+            case 2: tab = .blockExplorer
+            default: tab = .settings
         }
         onSelect?(tab)
     }

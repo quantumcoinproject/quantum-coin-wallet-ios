@@ -1,28 +1,21 @@
-//
 // JsBridge.swift
-//
 // Typed Swift facade over `JsEngine` that mirrors
 // `QuantumCoinJSBridge.java` one-to-one. Every method preserves the
 // Android contract: push vs pull transport, argument encoding, and
 // return shape.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/bridge/QuantumCoinJSBridge.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/bridge/QuantumCoinJSBridge.java
 // Rules copied from the Java source:
-//   - Sensitive payloads (passwords, private keys, seed phrases) use the
-//     pull model via `storePendingPayload` - they never appear in the
-//     `evaluate(...)` script string.
-//   - Non-sensitive primitives (chain id, address, public key) use push
-//     and are run through `escapeForJs` before interpolation.
-//   - `blockingCall(_:)` enforces a main-thread guard and timeouts.
-//
+// - Sensitive payloads (passwords, private keys, seed phrases) use the
+// pull model via `storePendingPayload` - they never appear in the
+// `evaluate(...)` script string.
+// - Non-sensitive primitives (chain id, address, public key) use push
+// and are run through `escapeForJs` before interpolation.
+// - `blockingCall(_:)` enforces a main-thread guard and timeouts.
 // ## Threading note
-//
 // All blocking wrappers on this class MUST be called from a background
 // queue. Calling from the main thread will trap with
 // `preconditionFailure`. Use the async wrappers from UI code.
-//
 
 import Foundation
 
@@ -30,10 +23,11 @@ public final class JsBridge: @unchecked Sendable {
 
     // MARK: - Singleton
 
+    /// Singleton handle. `JsBridge` is `@unchecked Sendable` and its
+    /// `init` is non-actor, so this static is safe to access from any
+    /// thread without an actor hop.
     public static let shared = JsBridge()
 
-    // Scrypt KDF parameters - copied verbatim from `SecureStorage.java`.
-    // Do NOT change: on-disk backups will no longer decrypt.
     public static let SCRYPT_N: Int = 262_144
     public static let SCRYPT_R: Int = 8
     public static let SCRYPT_P: Int = 1
@@ -54,18 +48,18 @@ public final class JsBridge: @unchecked Sendable {
         out.reserveCapacity(s.count + 8)
         for u in s.unicodeScalars {
             switch u {
-            case "\\": out.append("\\\\")
-            case "'": out.append("\\'")
-            case "\"": out.append("\\\"")
-            case "\u{0000}": out.append("\\u0000")
-            case "\n": out.append("\\n")
-            case "\r": out.append("\\r")
-            case "\t": out.append("\\t")
-            case "\u{0008}": out.append("\\b")
-            case "\u{000C}": out.append("\\f")
-            case "\u{2028}": out.append("\\u2028")
-            case "\u{2029}": out.append("\\u2029")
-            default:
+                case "\\": out.append("\\\\")
+                case "'": out.append("\\'")
+                case "\"": out.append("\\\"")
+                case "\u{0000}": out.append("\\u0000")
+                case "\n": out.append("\\n")
+                case "\r": out.append("\\r")
+                case "\t": out.append("\\t")
+                case "\u{0008}": out.append("\\b")
+                case "\u{000C}": out.append("\\f")
+                case "\u{2028}": out.append("\\u2028")
+                case "\u{2029}": out.append("\\u2029")
+                default:
                 if u.value < 0x20 {
                     out.append(String(format: "\\u%04x", u.value))
                 } else {
@@ -150,10 +144,20 @@ public final class JsBridge: @unchecked Sendable {
 
     @discardableResult
     public func sendTransaction(privKeyBase64: String, pubKeyBase64: String,
-                                toAddress: String, valueWei: String,
-                                gasLimit: String, rpcEndpoint: String,
-                                chainId: Int, advancedSigningEnabled: Bool) throws -> String {
-        try blockingCall { cb, rid in
+        toAddress: String, valueWei: String,
+        gasLimit: String, rpcEndpoint: String,
+        chainId: Int, advancedSigningEnabled: Bool) throws -> String {
+        // Tamper-gate chokepoint. MUST be the
+        // first call inside this function so a hostile signing
+        // request never reaches `storePendingPayload` (which would
+        // copy the private key into the bridge's pull-payload
+        // map). On a debugger-attached Release build or a tampered
+        // bundle we throw; on a jailbroken device we throw unless
+        // the user already accepted the disclosure dialog at
+        // launch. See `Security/TamperGatePolicy.swift` for the
+        // full policy and tradeoff write-up.
+        try TamperGatePolicy.shared.assertSafeToSign()
+        return try blockingCall { cb, rid in
             let payload: [String: Any] = [
                 "privKey": privKeyBase64,
                 "pubKey": pubKeyBase64,
@@ -173,11 +177,16 @@ public final class JsBridge: @unchecked Sendable {
 
     @discardableResult
     public func sendTokenTransaction(privKeyBase64: String, pubKeyBase64: String,
-                                     contractAddress: String, toAddress: String,
-                                     amountWei: String, gasLimit: String,
-                                     rpcEndpoint: String, chainId: Int,
-                                     advancedSigningEnabled: Bool) throws -> String {
-        try blockingCall { cb, rid in
+        contractAddress: String, toAddress: String,
+        amountWei: String, gasLimit: String,
+        rpcEndpoint: String, chainId: Int,
+        advancedSigningEnabled: Bool) throws -> String {
+        // See the matching comment on
+        // `sendTransaction`. The same chokepoint applies to the
+        // ERC-20-style token path because the same private key
+        // signs both transaction kinds.
+        try TamperGatePolicy.shared.assertSafeToSign()
+        return try blockingCall { cb, rid in
             let payload: [String: Any] = [
                 "privKey": privKeyBase64,
                 "pubKey": pubKeyBase64,
@@ -209,6 +218,25 @@ public final class JsBridge: @unchecked Sendable {
         try blockingCall { cb, rid in
             JsEngine.shared.registerCallback(requestId: rid, callback: cb)
             JsEngine.shared.evaluate("bridge.computeAddress('\(rid)', '\(Self.escapeForJs(pubKeyBase64))')")
+        }
+    }
+
+    /// Return the mixed-case checksum form of
+    /// `address` (delegates to the JS bundle's `getChecksumAddress`
+    /// helper). The review dialog displays the recipient and From
+    /// wallet in this form so a typo in a single hex digit
+    /// changes many letter cases - giving the user a strong
+    /// visual cue before they type "I agree".
+    /// Falls back to the lowercased input if the bundle's
+    /// helper is unavailable (older bundles); the fallback is
+    /// documented inside `bridge.html`'s `getChecksumAddress`
+    /// body.
+    @discardableResult
+    public func getChecksumAddress(_ address: String) throws -> String {
+        try blockingCall { cb, rid in
+            JsEngine.shared.registerCallback(requestId: rid, callback: cb)
+            JsEngine.shared.evaluate(
+                "bridge.getChecksumAddress('\(rid)', '\(Self.escapeForJs(address))')")
         }
     }
 
@@ -260,8 +288,8 @@ public final class JsBridge: @unchecked Sendable {
     /// callers should decode the nested `data.key` base64.
     @discardableResult
     public func scryptDerive(password: String, saltBase64: String,
-                             N: Int = SCRYPT_N, r: Int = SCRYPT_R,
-                             p: Int = SCRYPT_P, keyLen: Int = SCRYPT_KEY_LEN) throws -> String {
+        N: Int = SCRYPT_N, r: Int = SCRYPT_R,
+        p: Int = SCRYPT_P, keyLen: Int = SCRYPT_KEY_LEN) throws -> String {
         try blockingCall { cb, rid in
             let payload: [String: Any] = [
                 "password": password,
@@ -282,7 +310,7 @@ public final class JsBridge: @unchecked Sendable {
 
     private func blockingCall(_ body: (BridgeCallback, String) throws -> Void) throws -> String {
         precondition(!Thread.isMainThread,
-                     "Blocking bridge call must not be invoked on the main thread")
+            "Blocking bridge call must not be invoked on the main thread")
 
         if !JsEngine.shared.waitUntilReady(timeout: Self.defaultTimeoutSeconds) {
             throw JsEngineError.bridgeNotReady
@@ -301,9 +329,9 @@ public final class JsBridge: @unchecked Sendable {
             throw JsEngineError.timeout
         }
         switch outcome {
-        case .success(let json):
+            case .success(let json):
             return json
-        case .failure(let message):
+            case .failure(let message):
             JsEngine.shared.removePendingPayload(requestId: requestId)
             throw JsEngineError.callFailed(message)
         }
@@ -397,6 +425,11 @@ public extension JsBridge {
     }
 
     @inlinable
+    func getChecksumAddressAsync(_ address: String) async throws -> String {
+        try await withDetachedThrowing { try JsBridge.shared.getChecksumAddress(address) }
+    }
+
+    @inlinable
     func encryptWalletJsonAsync(walletInputJson: String, password: String) async throws -> String {
         try await withDetachedThrowing {
             try JsBridge.shared.encryptWalletJson(walletInputJson: walletInputJson, password: password)
@@ -422,39 +455,39 @@ public extension JsBridge {
 
     @inlinable
     func sendTransactionAsync(privKeyBase64: String, pubKeyBase64: String,
-                              toAddress: String, valueWei: String,
-                              gasLimit: String, rpcEndpoint: String,
-                              chainId: Int, advancedSigningEnabled: Bool) async throws -> String {
+        toAddress: String, valueWei: String,
+        gasLimit: String, rpcEndpoint: String,
+        chainId: Int, advancedSigningEnabled: Bool) async throws -> String {
         try await withDetachedThrowing {
             try JsBridge.shared.sendTransaction(privKeyBase64: privKeyBase64, pubKeyBase64: pubKeyBase64,
-                                                toAddress: toAddress, valueWei: valueWei,
-                                                gasLimit: gasLimit, rpcEndpoint: rpcEndpoint,
-                                                chainId: chainId, advancedSigningEnabled: advancedSigningEnabled)
+                toAddress: toAddress, valueWei: valueWei,
+                gasLimit: gasLimit, rpcEndpoint: rpcEndpoint,
+                chainId: chainId, advancedSigningEnabled: advancedSigningEnabled)
         }
     }
 
     @inlinable
     func sendTokenTransactionAsync(privKeyBase64: String, pubKeyBase64: String,
-                                   contractAddress: String, toAddress: String,
-                                   amountWei: String, gasLimit: String,
-                                   rpcEndpoint: String, chainId: Int,
-                                   advancedSigningEnabled: Bool) async throws -> String {
+        contractAddress: String, toAddress: String,
+        amountWei: String, gasLimit: String,
+        rpcEndpoint: String, chainId: Int,
+        advancedSigningEnabled: Bool) async throws -> String {
         try await withDetachedThrowing {
             try JsBridge.shared.sendTokenTransaction(privKeyBase64: privKeyBase64, pubKeyBase64: pubKeyBase64,
-                                                     contractAddress: contractAddress, toAddress: toAddress,
-                                                     amountWei: amountWei, gasLimit: gasLimit,
-                                                     rpcEndpoint: rpcEndpoint, chainId: chainId,
-                                                     advancedSigningEnabled: advancedSigningEnabled)
+                contractAddress: contractAddress, toAddress: toAddress,
+                amountWei: amountWei, gasLimit: gasLimit,
+                rpcEndpoint: rpcEndpoint, chainId: chainId,
+                advancedSigningEnabled: advancedSigningEnabled)
         }
     }
 
     @inlinable
     func scryptDeriveAsync(password: String, saltBase64: String,
-                           N: Int = SCRYPT_N, r: Int = SCRYPT_R,
-                           p: Int = SCRYPT_P, keyLen: Int = SCRYPT_KEY_LEN) async throws -> String {
+        N: Int = SCRYPT_N, r: Int = SCRYPT_R,
+        p: Int = SCRYPT_P, keyLen: Int = SCRYPT_KEY_LEN) async throws -> String {
         try await withDetachedThrowing {
             try JsBridge.shared.scryptDerive(password: password, saltBase64: saltBase64,
-                                             N: N, r: r, p: p, keyLen: keyLen)
+                N: N, r: r, p: p, keyLen: keyLen)
         }
     }
 }

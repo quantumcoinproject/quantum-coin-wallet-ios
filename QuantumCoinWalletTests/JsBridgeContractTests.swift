@@ -1,15 +1,11 @@
-//
 // JsBridgeContractTests.swift
-//
 // Contract test for `JsBridge`. Spins up the real `JsEngine`, calls
 // `createRandom(keyType: 3)`, and asserts the response envelope parses
 // and that `seedWords.count == 32` (Default/Android parity).
-//
 // This guards against accidental drift in:
-//   - The `bridge.html` / `quantumcoin-bundle.js` public API.
-//   - The JSON envelope shape (success/data/error).
-//   - The single-instance WKWebView startup sequence.
-//
+// - The `bridge.html` / `quantumcoin-bundle.js` public API.
+// - The JSON envelope shape (success/data/error).
+// - The single-instance WKWebView startup sequence.
 
 import XCTest
 @testable import QuantumCoinWallet

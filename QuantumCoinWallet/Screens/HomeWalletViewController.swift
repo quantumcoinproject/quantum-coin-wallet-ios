@@ -1,25 +1,20 @@
-//
 // HomeWalletViewController.swift
-//
 // Port of `HomeWalletFragment.java` / `home_wallet_fragment.xml` (the
 // 3800-line layout with many mutually-exclusive linear layouts). iOS:
 // one view controller with a `WizardStep` enum and a single child
 // `UIStackView` shown at a time.
-//
 // Key rules lifted from the Android source:
-//   - Min password = 12 chars, no leading/trailing whitespace, confirm match.
-//   - Create vs Restore radio.
-//   - Phone backup radio writes BACKUP_ENABLED_KEY (yes=1, no=0).
-//   - Wallet type: Default -> keyType 3 / 32 words; Advanced -> 5 / 36.
-//   - Seed word length: 32 / 36 / 48 (phrase-restore only).
-//   - Seed verify uses BIP39Words + JsBridge.doesSeedWordExist.
-//   - Backup options: Cloud button shows cloud-backup-info confirmation
-//     before the folder picker, File button uses export-temp.
-//
+// - Min password = 12 chars, no leading/trailing whitespace, confirm match.
+// - Create vs Restore radio.
+// - Phone backup radio writes BACKUP_ENABLED_KEY (yes=1, no=0).
+// - Wallet type: Default -> keyType 3 / 32 words; Advanced -> 5 / 36.
+// - Seed word length: 32 / 36 / 48 (phrase-restore only).
+// - Seed verify uses BIP39Words + JsBridge.doesSeedWordExist.
+// - Backup options: Cloud button shows cloud-backup-info confirmation
+// before the folder picker, File button uses export-temp.
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/HomeWalletFragment.java
-//   app/src/main/res/layout/home_wallet_fragment.xml
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/HomeWalletFragment.java
+// app/src/main/res/layout/home_wallet_fragment.xml
 
 import UIKit
 
@@ -87,16 +82,16 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         view.addSubview(scroll)
 
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            contentStack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 20),
-            contentStack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -20),
-            contentStack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -20),
-            contentStack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -40)
-        ])
+                scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+                contentStack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 20),
+                contentStack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -20),
+                contentStack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 20),
+                contentStack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -20),
+                contentStack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -40)
+            ])
 
         render()
     }
@@ -106,12 +101,12 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     private func render() {
         contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         switch step {
-        case .setPassword:    renderSetPassword()
-        case .createOrRestore: renderCreateOrRestore()
-        case .phoneBackup:    renderPhoneBackup()
-        case .walletType:     renderWalletType()
-        case .seedLength:     renderSeedLength()
-        case .seedShow:
+            case .setPassword: renderSetPassword()
+            case .createOrRestore: renderCreateOrRestore()
+            case .phoneBackup: renderPhoneBackup()
+            case .walletType: renderWalletType()
+            case .seedLength: renderSeedLength()
+            case .seedShow:
             // Two distinct UIs share `.seedShow`: the create flow's
             // gated reveal screen, and the restore flow's manual
             // SeedChipGrid entry. Routing both through this switch
@@ -124,14 +119,14 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
             } else {
                 startRestoreFromPhrasePrompt()
             }
-        case .seedVerify:     renderSeedVerify()
-        case .confirmWallet:  renderConfirmWallet()
-        case .backupOptions:  renderBackupOptions()
-        case .done:           finishAndRouteHome()
+            case .seedVerify: renderSeedVerify()
+            case .confirmWallet: renderConfirmWallet()
+            case .backupOptions: renderBackupOptions()
+            case .done: finishAndRouteHome()
         }
         // Each render swaps the entire contentStack contents, so the
         // press-feedback wiring needs to be re-applied for the freshly
-        // built buttons. `enablePressFeedback()` is idempotent so any
+        // built buttons. `enablePressFeedback` is idempotent so any
         // previously-wired surface (header back arrow, etc.) stays
         // unchanged.
         contentStack.installPressFeedbackRecursive()
@@ -142,50 +137,49 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     private func renderSetPassword() {
         let L = Localization.shared
         let title = makeTitle(L.getSetWalletPasswordByLangValues())
-        let hint  = makeBody(L.getUseStrongPasswordByLangValues())
-        // MARK: - Keychain autofill (vault create-wallet)
-        //
+        let hint = makeBody(L.getUseStrongPasswordByLangValues())
+        // MARK: - Keychain autofill (strongbox create-wallet)
         // Pairs `.newPassword` (twice: pw + rt) with a hidden
-        // `.username` carrying `CredentialIdentifier.vaultUsername`.
+        // `.username` carrying `CredentialIdentifier.strongboxUsername`.
         // After the user submits this step iOS may show "Save
         // Password as QuantumCoin-<deviceSuffix>?". Saving is
         // OPT-IN: dismissing the sheet writes nothing to Keychain
         // and the wallet is still created. The Keychain account
-        // name is locked to vaultUsername so a future unlock can
+        // name is locked to strongboxUsername so a future unlock can
         // deterministically find it; allowing per-save username
         // editing would create orphaned entries that unlock could
         // never query. User-choice override: see
         // CredentialIdentifier file header.
         let usernameField = UsernameField.make(
-            CredentialIdentifier.vaultUsername)
+            CredentialIdentifier.strongboxUsername)
         let pw = makeSecureField(placeholder: L.getPasswordByLangValues(), purpose: .newPassword)
         let rt = makeSecureField(placeholder: L.getRetypePasswordByLangValues(), purpose: .newPassword)
         let err = makeErrorLabel()
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self] _ in
-            let p = pw.text
-            let r = rt.text
-            if p.trimmingCharacters(in: .whitespacesAndNewlines).count < Constants.MINIMUM_PASSWORD_LENGTH {
-                err.text = L.getPasswordSpecByErrors(); err.isHidden = false; return
-            }
-            if p != p.trimmingCharacters(in: .whitespacesAndNewlines) {
-                err.text = L.getPasswordSpaceByErrors(); err.isHidden = false; return
-            }
-            if p != r {
-                err.text = L.getRetypePasswordMismatchByErrors(); err.isHidden = false; return
-            }
-            self?.chosenPassword = p
-            // Move the phone-backup question to the very next screen
-            // for fresh installs so the user answers backup once, up
-            // front, before they touch any restore path. Returning
-            // users (BACKUP_ENABLED_KEY already persisted) skip
-            // straight to create-or-restore.
-            if PrefConnect.shared.contains(PrefKeys.BACKUP_ENABLED_KEY) {
-                self?.step = .createOrRestore
-            } else {
-                self?.step = .phoneBackup
-            }
-        }, for: .touchUpInside)
+        next.addAction(UIAction(handler: { [weak self] _ in
+                let p = pw.text
+                let r = rt.text
+                if p.trimmingCharacters(in: .whitespacesAndNewlines).count < Constants.MINIMUM_PASSWORD_LENGTH {
+                    err.text = L.getPasswordSpecByErrors(); err.isHidden = false; return
+                }
+                if p != p.trimmingCharacters(in: .whitespacesAndNewlines) {
+                    err.text = L.getPasswordSpaceByErrors(); err.isHidden = false; return
+                }
+                if p != r {
+                    err.text = L.getRetypePasswordMismatchByErrors(); err.isHidden = false; return
+                }
+                self?.chosenPassword = p
+                // Move the phone-backup question to the very next screen
+                // for fresh installs so the user answers backup once, up
+                // front, before they touch any restore path. Returning
+                // users (BACKUP_ENABLED_KEY already persisted) skip
+                // straight to create-or-restore.
+                if PrefConnect.shared.contains(PrefKeys.BACKUP_ENABLED_KEY) {
+                    self?.step = .createOrRestore
+                } else {
+                    self?.step = .phoneBackup
+                }
+            }), for: .touchUpInside)
         [title, hint, usernameField, pw, rt, err, wrapPrimaryRight(next)].forEach { contentStack.addArrangedSubview($0) }
         ModalDialogViewController.focusAndShowKeyboard(pw.underlyingTextField)
     }
@@ -198,8 +192,8 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let prompt = makeBody(L.getSelectAnOptionByLangValues())
         let group = RadioGroup()
         // Tag scheme matches Android `home_wallet_fragment.xml`:
-        //   1 = Create new, 0 = Restore from seed,
-        //   2 = Restore from File, 3 = Restore from Cloud.
+        // 1 = Create new, 0 = Restore from seed,
+        // 2 = Restore from File, 3 = Restore from Cloud.
         group.addChoice(tag: 1, title: L.getCreateNewWalletByLangValues())
         group.addChoice(tag: 0, title: L.getRestoreWalletFromSeedByLangValues())
         group.addChoice(tag: 2, title: L.getRestoreFromFileByLangValues())
@@ -208,45 +202,45 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // both radios unchecked until the user picks one.
         let bottomRule = makeRule()
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self] _ in
-            guard let self = self else { return }
-            guard let tag = group.selectedTag else {
-                self.showSelectAnOption(); return
-            }
-            switch tag {
-            case 1:
-                self.createNotRestore = true
-                self.advanceAfterCreateOrRestore()
-            case 0:
-                self.createNotRestore = false
-                self.advanceAfterCreateOrRestore()
-            case 2:
-                // Restore from a single `.wallet` file (SAF / DocumentPicker).
-                // The phone-backup question has already been answered
-                // immediately after Set Wallet Password, so go straight
-                // into the file picker. Pass `chosenPassword` through
-                // to RestoreFlow so the keystore is bootstrapped with
-                // the user's chosen vault password rather than the
-                // per-wallet backup password.
-                RestoreFlow.shared.onComplete = { [weak self] in
-                    guard let self = self,
-                          RestoreFlow.shared.didImportAny else { return }
-                    self.finishAndRouteHome()
+        next.addAction(UIAction(handler: { [weak self] _ in
+                guard let self = self else { return }
+                guard let tag = group.selectedTag else {
+                    self.showSelectAnOption(); return
                 }
-                RestoreFlow.shared.restoreFromFile(from: self,
-                                                  vaultPassword: self.chosenPassword)
-            case 3:
-                // Restore from cloud folder. The folder picker is
-                // re-presented every time so the user can switch
-                // folders (the previous "skip if bookmark exists" path
-                // could trap users on an empty folder forever).
-                self.startCloudRestore(vaultPassword: self.chosenPassword)
-            default:
-                break
-            }
-        }, for: .touchUpInside)
+                switch tag {
+                    case 1:
+                    self.createNotRestore = true
+                    self.advanceAfterCreateOrRestore()
+                    case 0:
+                    self.createNotRestore = false
+                    self.advanceAfterCreateOrRestore()
+                    case 2:
+                    // Restore from a single `.wallet` file (SAF / DocumentPicker).
+                    // The phone-backup question has already been answered
+                    // immediately after Set Wallet Password, so go straight
+                    // into the file picker. Pass `chosenPassword` through
+                    // to RestoreFlow so the keystore is bootstrapped with
+                    // the user's chosen strongbox password rather than the
+                    // per-wallet backup password.
+                    RestoreFlow.shared.onComplete = { [weak self] in
+                        guard let self = self,
+                        RestoreFlow.shared.didImportAny else { return }
+                        self.finishAndRouteHome()
+                    }
+                    RestoreFlow.shared.restoreFromFile(from: self,
+                        strongboxPassword: self.chosenPassword)
+                    case 3:
+                    // Restore from cloud folder. The folder picker is
+                    // re-presented every time so the user can switch
+                    // folders (the previous "skip if bookmark exists" path
+                    // could trap users on an empty folder forever).
+                    self.startCloudRestore(strongboxPassword: self.chosenPassword)
+                    default:
+                    break
+                }
+            }), for: .touchUpInside)
         [back, title, topRule, prompt, group, bottomRule, wrapPrimaryRight(next)]
-            .forEach { contentStack.addArrangedSubview($0) }
+        .forEach { contentStack.addArrangedSubview($0) }
     }
 
     /// Routes Create / Restore-from-seed forward from the
@@ -274,19 +268,28 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // "Please select an option" dialog until the user picks one.
         let bottomRule = makeRule()
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self] _ in
-            guard let self = self else { return }
-            guard let tag = group.selectedTag else {
-                self.showSelectAnOption(); return
-            }
-            PrefConnect.shared.writeBool(PrefKeys.BACKUP_ENABLED_KEY, tag == 1)
-            // Phone Backup now sits between Set Wallet Password and
-            // Create-Or-Restore for fresh installs, so always advance
-            // to the create-or-restore picker once the user answers.
-            self.step = .createOrRestore
-        }, for: .touchUpInside)
+        next.addAction(UIAction(handler: { [weak self] _ in
+                guard let self = self else { return }
+                guard let tag = group.selectedTag else {
+                    self.showSelectAnOption(); return
+                }
+                PrefConnect.shared.writeBool(PrefKeys.BACKUP_ENABLED_KEY, tag == 1)
+                // Re-apply the iCloud-Backup exclusion bit so the
+                // toggle takes effect immediately. On a truly-fresh
+                // install neither slot file exists yet, so this call
+                // is a no-op; we still call it for uniformity with
+                // the Settings flow and so a re-onboarding (e.g. after
+                // delete-all + re-create) honours the new choice on
+                // the previous-install slot files. See
+                // `BackupExclusion.swift` for rationale.
+                BackupExclusion.applyToStrongboxFiles()
+                // Phone Backup now sits between Set Wallet Password and
+                // Create-Or-Restore for fresh installs, so always advance
+                // to the create-or-restore picker once the user answers.
+                self.step = .createOrRestore
+            }), for: .touchUpInside)
         [back, title, topRule, body, group, bottomRule, wrapPrimaryRight(next)]
-            .forEach { contentStack.addArrangedSubview($0) }
+        .forEach { contentStack.addArrangedSubview($0) }
     }
 
     /// Restore-from-cloud entry. Always re-presents the folder picker
@@ -294,25 +297,24 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// chosen folder has no `.wallet` files, surfaces the localized
     /// "no backups found" toast and bails out (the picker will be
     /// re-shown on the next attempt). Issue 8.
-    ///
-    /// `vaultPassword` is forwarded to `RestoreFlow.runBatch` so the
-    /// keystore is bootstrapped with the user's chosen vault password
+    /// `strongboxPassword` is forwarded to `RestoreFlow.runBatch` so the
+    /// keystore is bootstrapped with the user's chosen strongbox password
     /// on first run instead of the per-wallet backup password.
-    private func startCloudRestore(vaultPassword: String? = nil) {
+    private func startCloudRestore(strongboxPassword: String? = nil) {
         CloudBackupManager.shared.presentFolderPicker(from: self) { [weak self] ok in
             guard let self = self, ok else { return }
-            let files = CloudBackupManager.shared.listWalletFiles()
-            if files.isEmpty {
+            let files = CloudBackupManager.shared.listWalletFiles
+            if files().isEmpty {
                 Toast.showMessage(Localization.shared.getRestoreNoBackupsFoundByLangValues())
                 return
             }
             RestoreFlow.shared.onComplete = { [weak self] in
                 guard let self = self,
-                      RestoreFlow.shared.didImportAny else { return }
+                RestoreFlow.shared.didImportAny else { return }
                 self.finishAndRouteHome()
             }
-            RestoreFlow.shared.runBatch(urls: files, host: self,
-                                        vaultPassword: vaultPassword)
+            RestoreFlow.shared.runBatch(urls: files(), host: self,
+                strongboxPassword: strongboxPassword)
         }
     }
 
@@ -329,26 +331,26 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // wallet-type radios that start unchecked.
         let bottomRule = makeRule()
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self] _ in
-            guard let self = self else { return }
-            guard let tag = group.selectedTag else {
-                self.showSelectAnOption(); return
-            }
-            self.keyType = tag
-            if self.createNotRestore == true {
-                // Generate seed words but do NOT yet persist the wallet.
-                // Android `HomeWalletFragment.java:1167` only calls
-                // `saveWalletFromSeedWords` from verify-Next or
-                // skip-confirm; mirror that here so user can back out
-                // without writing to the keystore.
-                self.step = .seedShow
-                self.generateSeedWords()
-            } else {
-                self.step = .seedLength
-            }
-        }, for: .touchUpInside)
+        next.addAction(UIAction(handler: { [weak self] _ in
+                guard let self = self else { return }
+                guard let tag = group.selectedTag else {
+                    self.showSelectAnOption(); return
+                }
+                self.keyType = tag
+                if self.createNotRestore == true {
+                    // Generate seed words but do NOT yet persist the wallet.
+                    // Android `HomeWalletFragment.java:1167` only calls
+                    // `saveWalletFromSeedWords` from verify-Next or
+                    // skip-confirm; mirror that here so user can back out
+                    // without writing to the keystore.
+                    self.step = .seedShow
+                    self.generateSeedWords()
+                } else {
+                    self.step = .seedLength
+                }
+            }), for: .touchUpInside)
         [back, title, topRule, prompt, group, bottomRule, wrapPrimaryRight(next)]
-            .forEach { contentStack.addArrangedSubview($0) }
+        .forEach { contentStack.addArrangedSubview($0) }
     }
 
     private func renderSeedLength() {
@@ -365,17 +367,17 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // radios; user must explicitly pick a length).
         let bottomRule = makeRule()
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self] _ in
-            guard let self = self else { return }
-            guard let tag = group.selectedTag else {
-                self.showSelectAnOption(); return
-            }
-            self.seedLength = tag
-            self.step = .seedShow
-            self.startRestoreFromPhrasePrompt()
-        }, for: .touchUpInside)
+        next.addAction(UIAction(handler: { [weak self] _ in
+                guard let self = self else { return }
+                guard let tag = group.selectedTag else {
+                    self.showSelectAnOption(); return
+                }
+                self.seedLength = tag
+                self.step = .seedShow
+                self.startRestoreFromPhrasePrompt()
+            }), for: .touchUpInside)
         [back, title, topRule, prompt, group, bottomRule, wrapPrimaryRight(next)]
-            .forEach { contentStack.addArrangedSubview($0) }
+        .forEach { contentStack.addArrangedSubview($0) }
     }
 
     private func renderSeedShow() {
@@ -396,7 +398,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
             let info4 = makeBody(L.getSeedWordsInfo4ByLangValues())
             let reveal = makeRevealLabel(text: L.getSeedWordsShowByLangValues())
             reveal.addTarget(self, action: #selector(tapRevealSeed),
-                             for: .touchUpInside)
+                for: .touchUpInside)
             [back, title, makeRule(), info1, info2, info3, info4, reveal].forEach {
                 contentStack.addArrangedSubview($0)
             }
@@ -411,12 +413,23 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let grid = SeedChipGrid(words: generatedSeed, editable: false)
         let copyRow = makeCopyRow { [weak self] in
             guard let self = self, !self.generatedSeed.isEmpty else { return }
-            UIPasteboard.general.string = self.generatedSeed.joined(separator: " ")
+            // This is the seed-phrase copy site - the
+            // most sensitive pasteboard write the app ever makes. Use a
+            // 30 s expiration (instead of the 60 s default) because the
+            // user reliably pastes into a backup notes app within
+            // seconds and a shorter window narrows the residual-exposure
+            // surface. `Pasteboard.copySensitive` also opts the item out
+            // of Universal Clipboard via `.localOnly: true` so the seed
+            // phrase does NOT replicate to the user's other Apple
+            // devices. See Pasteboard.swift for the full rationale.
+            Pasteboard.copySensitive(
+                self.generatedSeed.joined(separator: " "),
+                lifetime: 30)
             // Feedback is the inline "Copied" label inside the row,
             // mirroring Android's `homeCopyClickListener`.
         }
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self] _ in self?.step = .seedVerify }, for: .touchUpInside)
+        next.addAction(UIAction(handler: { [weak self] _ in self?.step = .seedVerify }), for: .touchUpInside)
 
         contentStack.addArrangedSubview(back)
         contentStack.addArrangedSubview(title)
@@ -441,7 +454,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // shared with every other onboarding step.
         let skipLink = makeSkipLink(text: L.getSkipByLangValues())
         skipLink.addTarget(self, action: #selector(tapVerifySkip),
-                           for: .touchUpInside)
+            for: .touchUpInside)
         let skipRow = UIStackView()
         skipRow.axis = .horizontal
         skipRow.alignment = .center
@@ -452,40 +465,40 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
 
         let title = makeTitle(L.getVerifySeedWordsByLangValues())
         let grid = SeedChipGrid(words: Array(repeating: "", count: generatedSeed.count),
-                                editable: true)
+            editable: true)
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self, weak grid] _ in
-            guard let self = self, let grid = grid else { return }
-            let entered = grid.collectWords()
-            // Android `HomeWalletFragment.java:761-767` silently rejects
-            // wrong words: clear the offending field, focus it, and
-            // return without showing an error string. Mirror that here.
-            var firstInvalid: Int? = nil
-            for (i, w) in entered.enumerated() {
-                let expected = self.generatedSeed[safe: i] ?? ""
-                if !BIP39Words.exists(w) || w != expected {
-                    grid.clearField(at: i)
-                    if firstInvalid == nil { firstInvalid = i }
+        next.addAction(UIAction(handler: { [weak self, weak grid] _ in
+                guard let self = self, let grid = grid else { return }
+                let entered = grid.collectWords()
+                // Android `HomeWalletFragment.java:761-767` silently rejects
+                // wrong words: clear the offending field, focus it, and
+                // return without showing an error string. Mirror that here.
+                var firstInvalid: Int? = nil
+                for (i, w) in entered.enumerated() {
+                    let expected = self.generatedSeed[safe: i] ?? ""
+                    if !BIP39Words.exists(w) || w != expected {
+                        grid.clearField(at: i)
+                        if firstInvalid == nil { firstInvalid = i }
+                    }
                 }
-            }
-            if let i = firstInvalid {
-                grid.focusField(at: i)
-                return
-            }
-            // Words verified - now commit the generated wallet to the
-            // keystore (Android `saveWalletFromSeedWords`) and advance.
-            // Routes through the unlock-prompt helper because the user
-            // may have entered "Create or Restore" from the Wallets
-            // list (the `.setPassword` step is skipped on that path,
-            // so `chosenPassword` is empty and we need to collect the
-            // vault password here).
-            self.commitGeneratedWalletWithUnlock { [weak self] in
-                self?.step = .backupOptions
-            }
-        }, for: .touchUpInside)
+                if let i = firstInvalid {
+                    grid.focusField(at: i)
+                    return
+                }
+                // Words verified - now commit the generated wallet to the
+                // keystore (Android `saveWalletFromSeedWords`) and advance.
+                // Routes through the unlock-prompt helper because the user
+                // may have entered "Create or Restore" from the Wallets
+                // list (the `.setPassword` step is skipped on that path,
+                // so `chosenPassword` is empty and we need to collect the
+                // strongbox password here).
+                self.commitGeneratedWalletWithUnlock { [weak self] in
+                    self?.step = .backupOptions
+                }
+            }), for: .touchUpInside)
         [makeBackBar(), title, makeRule(), skipRow, grid, makeRule(),
-         wrapPrimaryRight(next)]
-            .forEach { contentStack.addArrangedSubview($0) }
+            wrapPrimaryRight(next)]
+        .forEach { contentStack.addArrangedSubview($0) }
     }
 
     @objc private func tapVerifySkip() {
@@ -501,7 +514,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         confirm.onConfirm = { [weak self] in
             // Same reasoning as the verify-Next path: route through
             // the unlock-prompt helper so the Wallets-list entry can
-            // collect the vault password before the keystore write.
+            // collect the strongbox password before the keystore write.
             self?.commitGeneratedWalletWithUnlock { [weak self] in
                 self?.step = .backupOptions
             }
@@ -513,7 +526,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let L = Localization.shared
         let backBar = makeBackBar()
         let title = makeTitle(L.getConfirmWalletByLangValues())
-        let body  = makeBody(L.getConfirmWalletDescriptionByLangValues())
+        let body = makeBody(L.getConfirmWalletDescriptionByLangValues())
         let addressLabel = makeBody(L.getAddressByLangValues())
         let addressRow = makeAddressRow(address: pendingAddress)
         let balanceLabel = makeBody(L.getBalanceByLangValues())
@@ -522,22 +535,22 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // intrinsic content and right-docks alongside Next, matching
         // Android `wrap_content + layout_gravity="right"` pill buttons.
         let back = makeNextButton(title: L.getBackByLangValues())
-        back.addAction(UIAction { [weak self] _ in
-            // Re-render the restore prompt; `.seedShow` routes there
-            // for the restore branch, and `enteredRestorePhrase` is
-            // carried across so the grid stays filled in.
-            self?.step = .seedShow
-            self?.startRestoreFromPhrasePrompt()
-        }, for: .touchUpInside)
+        back.addAction(UIAction(handler: { [weak self] _ in
+                // Re-render the restore prompt; `.seedShow` routes there
+                // for the restore branch, and `enteredRestorePhrase` is
+                // carried across so the grid stays filled in.
+                self?.step = .seedShow
+                self?.startRestoreFromPhrasePrompt()
+            }), for: .touchUpInside)
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self] _ in
-            self?.persistPendingWalletWithUnlock()
-        }, for: .touchUpInside)
+        next.addAction(UIAction(handler: { [weak self] _ in
+                self?.persistPendingWalletWithUnlock()
+            }), for: .touchUpInside)
         [backBar, title, makeRule(), body,
-         addressLabel, addressRow,
-         balanceLabel, balanceValue,
-         makeRule(), wrapPrimaryRight(back, next)]
-            .forEach { contentStack.addArrangedSubview($0) }
+            addressLabel, addressRow,
+            balanceLabel, balanceValue,
+            makeRule(), wrapPrimaryRight(back, next)]
+        .forEach { contentStack.addArrangedSubview($0) }
         fetchAndShowBalance(into: balanceValue)
     }
 
@@ -571,7 +584,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         nextRow.addArrangedSubview(next)
 
         [backBar, title, body, makeRule(), cloud, file, makeRule(), nextRow]
-            .forEach { contentStack.addArrangedSubview($0) }
+        .forEach { contentStack.addArrangedSubview($0) }
     }
 
     // MARK: - Actions
@@ -608,12 +621,12 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
 
     /// Phase 2 of create-new-wallet: encrypt the previously-generated
     /// seed words with the user's password and persist via
-    /// `KeyStore.addWallet`. Runs `then` on the main actor on success.
+    /// `UnlockCoordinatorV2.appendWallet`. Runs `then` on the
+    /// main actor on success.
     /// Mirrors Android `saveWalletFromSeedWords`
     /// (`HomeWalletFragment.java:1167`), which is invoked only from
     /// verify-Next (line 772) or skip-confirm-yes (line 792-793).
-    ///
-    /// `password` must be the user's actual vault password. On the
+    /// `password` must be the user's actual strongbox password. On the
     /// first-time-onboarding path it is the value typed into
     /// `renderSetPassword` (carried via `chosenPassword`). On the
     /// "Wallets list > Create or Restore" path the set-password step
@@ -621,7 +634,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// `commitGeneratedWalletWithUnlock` to collect it via
     /// `UnlockDialogViewController` before reaching here.
     private func commitGeneratedWallet(password: String,
-                                       then: @escaping () -> Void) {
+        then: @escaping () -> Void) {
         // If we already committed (e.g. user came back to verify and
         // is finishing for the second time), short-circuit to avoid a
         // duplicate keystore slot.
@@ -639,35 +652,32 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 // The bridge `encryptWalletJson` accepts a JSON
                 // `{seedWords:[...]}` payload (bridge.html line 372).
                 let walletInputJson = BackupExporter.encodeWalletInput(seedWords: seedWords)
-                // `unlock` here is the cold-launch / first-time bootstrap
-                // gate: it derives + writes the main-key envelope on a
-                // fresh install and populates the in-memory metadata
-                // snapshot so the subsequent `recordNewWallet` write
-                // operates on a consistent vault. The vault key bytes
-                // never survive this call - see `KeyStore.withMainKey`.
-                try KeyStore.shared.unlock(password: password)
+                // First-launch bootstrap vs returning-user paths:
+                // - First launch (no slot file): create the
+                // strongbox via `createNewStrongbox`, then
+                // `appendWallet` writes the first slot.
+                // - Returning user (slot file present): unlock
+                // the existing strongbox and append.
+                // Both paths re-derive the mainKey from the
+                // user's password inside the coordinator and zero
+                // it on return - the strongbox key bytes never
+                // survive past the helper call.
+                try Self.bootstrapOrUnlock(password: password)
                 let encryptedEnv = try JsBridge.shared.encryptWalletJson(
                     walletInputJson: walletInputJson, password: password)
                 guard let enc = BackupExporter.extractEncryptedJson(encryptedEnv) else {
-                    throw KeyStoreError.other("encryptWalletJson bad shape")
+                    throw UnlockCoordinatorV2Error.decodeFailed
                 }
-                let idx = try KeyStore.shared.addWallet(
-                    encryptedWalletJson: enc, password: password)
-                // Persist the index->address row in the encrypted
-                // SECURE_VAULT_BLOB so the wallets list,
-                // main strip, and Receive screen all show the new
-                // wallet without needing a relaunch - WITHOUT writing
-                // any plaintext address to PrefConnect.
-                try KeyStore.shared.recordNewWallet(
-                    index: idx, address: address, password: password)
+                let idx = try UnlockCoordinatorV2.appendWallet(
+                    address: address,
+                    encryptedSeed: enc,
+                    hasSeed: true,
+                    password: password)
                 await MainActor.run { [weak self] in
                     self?.generatedWalletJson = enc
                     self?.walletIndex = idx
                     PrefConnect.shared.writeInt(
                         PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
-                    PrefConnect.shared.walletIndexHasSeed["\(idx)"] = true
-                    PrefConnect.shared.writeBool(
-                        "\(PrefKeys.WALLET_HAS_SEED_KEY_PREFIX)\(idx)", true)
                     wait.dismiss(animated: true) { then() }
                 }
             } catch {
@@ -679,14 +689,35 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         }
     }
 
-    /// Wraps `commitGeneratedWallet` with a vault unlock prompt for the
+    /// Bootstrap the strongbox on first launch (no slot file) or
+    /// unlock the existing strongbox on a returning device. After
+    /// this returns, `Strongbox.shared` is populated and
+    /// `appendWallet` can write the first / next wallet.
+    /// The decision is made from `bootState` (slot file present
+    /// or not), NOT from an in-memory wallet count - the caller
+    /// may run while another path has already loaded the snapshot
+    /// (e.g. add-wallet from the wallets list); in that case we
+    /// short-circuit because the snapshot is fresh.
+    nonisolated private static func bootstrapOrUnlock(password: String) throws {
+        if Strongbox.shared.isSnapshotLoaded { return }
+        switch UnlockCoordinatorV2.bootState() {
+            case .noStrongbox:
+            try UnlockCoordinatorV2.createNewStrongbox(password: password)
+            case .strongboxPresent:
+            try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(password)
+            case .tampered(let why):
+            throw UnlockCoordinatorV2Error.tamperDetected(why)
+        }
+    }
+
+    /// Wraps `commitGeneratedWallet` with a strongbox unlock prompt for the
     /// "Wallets list > Create or Restore" entry path, where the set-
     /// password step was skipped and `chosenPassword` is empty. On the
     /// first-time-onboarding path this short-circuits to the original
     /// behavior with no extra UI. Mirrors the Android contract: the
-    /// vault unlock at app entry suffices, but iOS still needs the
+    /// strongbox unlock at app entry suffices, but iOS still needs the
     /// cleartext password here to feed `bridge.encryptWalletJson` and
-    /// keep the inner-layer password equal to the vault password (so
+    /// keep the inner-layer password equal to the strongbox password (so
     /// later Send / Reveal flows can decrypt with that same password).
     private func commitGeneratedWalletWithUnlock(then: @escaping () -> Void) {
         if !chosenPassword.isEmpty {
@@ -710,42 +741,40 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let back = makeBackBar()
         let title = makeTitle(L.getEnterSeedWordsByLangValues())
         let initial = enteredRestorePhrase.count == seedLength
-            ? enteredRestorePhrase
-            : Array(repeating: "", count: seedLength)
+        ? enteredRestorePhrase
+        : Array(repeating: "", count: seedLength)
         let grid = SeedChipGrid(words: initial, editable: true)
         let next = makeNextButton()
-        next.addAction(UIAction { [weak self, weak grid, weak next] _ in
-            guard let self = self, let grid = grid else { return }
-            let entered = grid.collectWords()
-            // Mirror Android's silent rejection: clear any field whose
-            // entry is not a BIP39 word, focus the first invalid one,
-            // and return without showing an error string.
-            var firstInvalid: Int? = nil
-            for (i, w) in entered.enumerated() where !BIP39Words.exists(w) {
-                grid.clearField(at: i)
-                if firstInvalid == nil { firstInvalid = i }
-            }
-            if let i = firstInvalid {
-                grid.focusField(at: i)
-                return
-            }
-            self.enteredRestorePhrase = entered
-            self.deriveThenShowConfirm(entered, from: next)
-        }, for: .touchUpInside)
+        next.addAction(UIAction(handler: { [weak self, weak grid, weak next] _ in
+                guard let self = self, let grid = grid else { return }
+                let entered = grid.collectWords()
+                // Mirror Android's silent rejection: clear any field whose
+                // entry is not a BIP39 word, focus the first invalid one,
+                // and return without showing an error string.
+                var firstInvalid: Int? = nil
+                for (i, w) in entered.enumerated() where !BIP39Words.exists(w) {
+                    grid.clearField(at: i)
+                    if firstInvalid == nil { firstInvalid = i }
+                }
+                if let i = firstInvalid {
+                    grid.focusField(at: i)
+                    return
+                }
+                self.enteredRestorePhrase = entered
+                self.deriveThenShowConfirm(entered, from: next)
+            }), for: .touchUpInside)
         [back, title, makeRule(), grid, makeRule(), wrapPrimaryRight(next)]
-            .forEach { contentStack.addArrangedSubview($0) }
+        .forEach { contentStack.addArrangedSubview($0) }
     }
 
     /// Restore branch only: derive the wallet's `address` from the user's
     /// entered phrase via `walletFromPhrase`, but DO NOT persist. The
     /// `.confirmWallet` step shows the address so the user can go back
     /// and fix typos before the wallet is written to secure storage.
-    ///
     /// `walletFromPhrase` only returns `{address, privateKey, publicKey}`
     /// (no seedWords) — the seed words are the user's entry, captured
     /// verbatim into `pendingSeedWords` so `persistPendingWallet` can use
     /// them as the encrypt input.
-    ///
     /// We deliberately don't show a `WaitDialog` here: the previous copy
     /// ("Please wait while your wallet is saved") was misleading because
     /// nothing is being saved at this stage - the keystore write happens
@@ -774,7 +803,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     }
 
     /// Final step of the restore branch: encrypt the cached
-    /// `pendingSeedWords` under the vault main key and commit the
+    /// `pendingSeedWords` under the strongbox main key and commit the
     /// returned encrypted JSON to `KeyStore`, then advance to
     /// `.backupOptions`. We use the seed words (not a pre-built
     /// walletJson) because `bridge.html`'s `encryptWalletJson` only
@@ -794,28 +823,26 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         Task.detached(priority: .userInitiated) {
             do {
                 let walletInputJson = BackupExporter.encodeWalletInput(seedWords: seedWords)
-                // Bootstrap / refresh metadata so the addWallet +
-                // recordNewWallet writes below see a consistent vault.
-                // The vault key never survives this call.
-                try KeyStore.shared.unlock(password: password)
+                // Bootstrap (first-launch) or unlock (returning
+                // user) so the appendWallet write below sees a
+                // consistent strongbox. The strongbox key never
+                // survives this call - see bootstrapOrUnlock.
+                try Self.bootstrapOrUnlock(password: password)
                 let encEnv = try JsBridge.shared.encryptWalletJson(
                     walletInputJson: walletInputJson, password: password)
                 guard let enc = BackupExporter.extractEncryptedJson(encEnv) else {
-                    throw KeyStoreError.other("encryptWalletJson bad shape")
+                    throw UnlockCoordinatorV2Error.decodeFailed
                 }
-                let idx = try KeyStore.shared.addWallet(
-                    encryptedWalletJson: enc, password: password)
-                // Same encrypted-only address-index update as the
-                // create flow above; no plaintext map is touched.
-                try KeyStore.shared.recordNewWallet(
-                    index: idx, address: address, password: password)
+                let idx = try UnlockCoordinatorV2.appendWallet(
+                    address: address,
+                    encryptedSeed: enc,
+                    hasSeed: true,
+                    password: password)
                 await MainActor.run { [weak self] in
                     self?.generatedWalletJson = enc
                     self?.generatedAddress = address
                     self?.walletIndex = idx
                     PrefConnect.shared.writeInt(PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
-                    PrefConnect.shared.walletIndexHasSeed["\(idx)"] = true
-                    PrefConnect.shared.writeBool("\(PrefKeys.WALLET_HAS_SEED_KEY_PREFIX)\(idx)", true)
                     wait.dismiss(animated: true) { self?.step = .backupOptions }
                 }
             } catch {
@@ -829,7 +856,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
 
     /// Same role as `commitGeneratedWalletWithUnlock` but for the
     /// restore-from-phrase confirm step. Falls through to
-    /// `persistPendingWallet(password:)` once the vault password is
+    /// `persistPendingWallet(password:)` once the strongbox password is
     /// known (either `chosenPassword` from first-time onboarding or the
     /// password the user typed into `UnlockDialogViewController`).
     private func persistPendingWalletWithUnlock() {
@@ -842,8 +869,8 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         }
     }
 
-    /// Show `UnlockDialogViewController` and validate the typed password
-    /// via `KeyStore.unlock`. On success, dismiss the dialog and call
+    /// Show `UnlockDialogViewController` and validate the typed
+    /// password via `bootstrapOrUnlock`. On success, dismiss the dialog and call
     /// `then(password)` so the caller can use that exact string for
     /// `bridge.encryptWalletJson`. On failure, surface the same wrong-
     /// password UX used by the post-backup unlock prompt
@@ -861,20 +888,21 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 message: Localization.shared.getWaitUnlockByLangValues())
             dlg.present(wait, animated: true)
             Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
-                var ok = false
+                // Preserve the typed error so the
+                // UI can distinguish lockout from wrong-password.
+                var failure: Error? = nil
                 do {
-                    try KeyStore.shared.unlock(password: pw)
-                    ok = true
+                    try Self.bootstrapOrUnlock(password: pw)
                 } catch {
-                    ok = false
+                    failure = error
                 }
-                let okFinal = ok
+                let err = failure
                 await MainActor.run {
                     wait?.dismiss(animated: true) {
-                        if okFinal {
+                        if err == nil {
                             dlg?.dismiss(animated: true) { then(pw) }
                         } else if let dlg = dlg {
-                            self?.showUnlockError(over: dlg)
+                            self?.showUnlockError(over: dlg, error: err)
                         }
                     }
                 }
@@ -888,11 +916,11 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // 1. show the cloud-backup info dialog,
         // 2. prompt for a fresh backup password (`BackupPasswordDialog`),
         // 3. re-encrypt the wallet with that password while showing
-        //    `WaitDialog`,
+        // `WaitDialog`,
         // 4. write the encrypted JSON via the security-scoped folder
-        //    picked through `UIDocumentPickerViewController(forOpening:
-        //    [.folder])` - the iOS analog of Android's
-        //    `Intent.ACTION_OPEN_DOCUMENT_TREE`.
+        // picked through `UIDocumentPickerViewController(forOpening:
+        // [.folder])` - the iOS analog of Android's
+        // `Intent.ACTION_OPEN_DOCUMENT_TREE`.
         let info = ConfirmDialogViewController(
             title: "",
             message: Localization.shared.getCloudBackupInfoByLangValues(),
@@ -907,8 +935,8 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // 1. prompt for a backup password,
         // 2. re-encrypt while showing `WaitDialog`,
         // 3. save the encrypted JSON via
-        //    `UIDocumentPickerViewController(forExporting:)` - the iOS
-        //    analog of Android's `Intent.ACTION_CREATE_DOCUMENT`.
+        // `UIDocumentPickerViewController(forExporting:)` - the iOS
+        // analog of Android's `Intent.ACTION_CREATE_DOCUMENT`.
         promptBackupPassword(target: .file)
     }
 
@@ -917,7 +945,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // field can scope the iOS Keychain Save prompt to a per-
         // wallet slot (see `CredentialIdentifier.backupUsername(address:)`),
         // preventing this Save from overwriting another wallet's
-        // backup credential or the vault credential.
+        // backup credential or the strongbox credential.
         let dlg = BackupPasswordDialog(mode: .create(address: generatedAddress))
         dlg.onSubmit = { [weak self, weak dlg] backupPwd in
             guard let self = self else { return }
@@ -946,8 +974,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // `requirePasswordReentryThenNavigate`: prompt the user to retype
         // the password they just set before we route home, so the
         // session begins unlocked and we confirm they still know it.
-        //
-        // Validation goes through `KeyStore.shared.unlock(password:)`,
+        // Validation goes through `bootstrapOrUnlock(password:)`,
         // which performs the same scrypt-derived AES-GCM decrypt that
         // Android's `SecureStorage.unlock` does (N=262144, r=8, p=1,
         // keyLen=32). We wrap it in a `WaitDialogViewController` because
@@ -963,22 +990,23 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 message: Localization.shared.getWaitUnlockByLangValues())
             dlg.present(wait, animated: true)
             Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
-                var ok = false
+                // Keep the typed error so the UI
+                // can render the lockout-specific copy.
+                var failure: Error? = nil
                 do {
-                    try KeyStore.shared.unlock(password: pw)
-                    ok = true
+                    try Self.bootstrapOrUnlock(password: pw)
                 } catch {
-                    ok = false
+                    failure = error
                 }
-                let okFinal = ok
+                let err = failure
                 await MainActor.run {
                     wait?.dismiss(animated: true) {
-                        if okFinal {
+                        if err == nil {
                             dlg?.dismiss(animated: true) {
                                 self?.finishAndRouteHome()
                             }
                         } else if let dlg = dlg {
-                            self?.showUnlockError(over: dlg)
+                            self?.showUnlockError(over: dlg, error: err)
                         }
                     }
                 }
@@ -1000,10 +1028,30 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// Wrong-password error layered as the orange "exclamation
     /// triangle + OK" alert on top of the unlock dialog. The unlock
     /// dialog stays alive underneath so the typed password is
-    /// preserved (no `clearField()`) and the user can fix a typo
+    /// preserved (no `clearField`) and the user can fix a typo
     /// without retyping it.
     private func showUnlockError(over dlg: UnlockDialogViewController) {
-        dlg.showOrangeError(Localization.shared.getWalletPasswordMismatchByErrors())
+        showUnlockError(over: dlg, error: nil)
+    }
+
+    /// Lockout-aware unlock-error renderer. If the
+    /// failure was the rate-limiter
+    /// (`UnlockCoordinatorV2Error.tooManyAttempts`) the user sees
+    /// the "wait N seconds" message rather than the generic
+    /// wrong-password copy - which would otherwise be confusing
+    /// because the password may be correct and the gate is
+    /// throttling them by design. See UnlockAttemptLimiter.
+    private func showUnlockError(over dlg: UnlockDialogViewController,
+        error: Error?) {
+        if let uc = error as? UnlockCoordinatorV2Error,
+        case let .tooManyAttempts(seconds) = uc {
+            dlg.showOrangeError(
+                UnlockAttemptLimiter.userFacingLockoutMessage(
+                    remainingSeconds: seconds))
+        } else {
+            dlg.showOrangeError(
+                Localization.shared.getWalletPasswordMismatchByErrors())
+        }
     }
 
     private func finishAndRouteHome() {
@@ -1014,19 +1062,17 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
 
     /// Common envelope returned by both `createRandom` and
     /// `walletFromPhrase` (latter via `extractWalletInfo`). Shape:
-    ///
-    ///   `{"success":true,"data":{address, privateKey, publicKey,
-    ///                            seed?, seedWords?}}`
-    ///
+    /// `{"success":true,"data":{address, privateKey, publicKey,
+    /// seed?, seedWords?()}}`
     /// Note: `seedWords` is only populated by `createRandom`; for
     /// `walletFromPhrase` the caller already has the user's entered
     /// words and should treat the empty array here as expected.
-    private static func parseWalletEnvelope(_ envelope: String)
-      throws -> (address: String, seedWords: [String], privateKey: String, publicKey: String) {
+    nonisolated private static func parseWalletEnvelope(_ envelope: String)
+    throws -> (address: String, seedWords: [String], privateKey: String, publicKey: String) {
         guard let data = envelope.data(using: .utf8),
-              let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let inner = obj["data"] as? [String: Any]
-        else { throw KeyStoreError.other("wallet envelope bad shape") }
+        let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let inner = obj["data"] as? [String: Any]
+        else { throw UnlockCoordinatorV2Error.decodeFailed }
         let address = (inner["address"] as? String) ?? ""
         let seeds = (inner["seedWords"] as? [String]) ?? []
         let priv = (inner["privateKey"] as? String) ?? ""
@@ -1034,20 +1080,29 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         return (address, seeds, priv, pub)
     }
 
-    /// Map `KeyStoreError` (and other low-level errors) to a user-
-    /// visible string. The most common case during commit is
-    /// `KeyStoreError.authenticationFailed` from a wrong vault
-    /// password; surface the same localized "wrong password" string the
-    /// `UnlockDialogViewController` flows use rather than the bare
-    /// `"\(error)"` enum-case description (`"authenticationFailed"`).
-    private static func userFacingError(_ error: Error) -> String {
-        if case KeyStoreError.authenticationFailed = error {
-            return Localization.shared.getWalletPasswordMismatchByErrors()
+    /// Map `UnlockCoordinatorV2Error` (and other low-level errors)
+    /// to a user-visible string. The most common case during
+    /// commit is `authenticationFailed` from a wrong strongbox
+    /// password; surface the same localized "wrong password"
+    /// string the `UnlockDialogViewController` flows use rather
+    /// than the bare `"\(error)"` enum-case description
+    /// (`"authenticationFailed"`).
+    nonisolated private static func userFacingError(_ error: Error) -> String {
+        if let uc = error as? UnlockCoordinatorV2Error {
+            switch uc {
+                case .authenticationFailed:
+                return Localization.shared.getWalletPasswordMismatchByErrors()
+                case .tooManyAttempts(let s):
+                return UnlockAttemptLimiter.userFacingLockoutMessage(
+                    remainingSeconds: s)
+                default:
+                break
+            }
         }
         return "\(error)"
     }
 
-    /// Mirror of `HomeViewController.resolveBlockExplorerBase()`:
+    /// Mirror of `HomeViewController.resolveBlockExplorerBase`:
     /// `Constants.BLOCK_EXPLORER_URL` is only populated after a network
     /// is activated by `BlockchainNetwork.activate(...)`, which the
     /// onboarding flow has not yet done. Falling back to the active
@@ -1080,8 +1135,8 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// creation moments so iOS surfaces the Save Password sheet
     /// (still opt-in for the user).
     private func makeSecureField(placeholder: String,
-                                 purpose: PasswordTextField.Purpose = .existingPassword)
-        -> PasswordTextField {
+        purpose: PasswordTextField.Purpose = .existingPassword)
+    -> PasswordTextField {
         let t = PasswordTextField(purpose: purpose)
         t.placeholder = placeholder
         return t
@@ -1098,18 +1153,17 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// Underlined "Click here to reveal..." link used to gate the seed
     /// grid on the seed-show step. Mirrors Android's
     /// `textView_home_seed_words_show` (UnderlineSpan).
-    ///
     /// Implemented as a UIButton so it picks up the standard
-    /// `enablePressFeedback()` alpha-dim treatment automatically.
+    /// `enablePressFeedback` alpha-dim treatment automatically.
     private func makeRevealLabel(text: String) -> UIButton {
         let b = UIButton(type: .system)
         b.setAttributedTitle(NSAttributedString(
-            string: text,
-            attributes: [
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
-                .foregroundColor: UIColor(named: "colorPrimary") ?? UIColor.systemBlue,
-                .font: Typography.mediumLabel(15)
-            ]), for: .normal)
+                string: text,
+                attributes: [
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    .foregroundColor: UIColor(named: "colorPrimary") ?? UIColor.systemBlue,
+                    .font: Typography.mediumLabel(15)
+                ]), for: .normal)
         b.titleLabel?.numberOfLines = 0
         // Left-align the title so it reads as a body link rather than
         // a centered button label, matching the Android TextView.
@@ -1121,18 +1175,17 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// Underlined system-blue "Skip" link used on the verify-seed
     /// screen. Mirrors Android `textView_home_seed_words_edit_skip`
     /// (`textColor=#2196F3`, `textSize=16dp`, end-aligned).
-    ///
     /// Implemented as a UIButton so it picks up the standard
-    /// `enablePressFeedback()` alpha-dim treatment automatically.
+    /// `enablePressFeedback` alpha-dim treatment automatically.
     private func makeSkipLink(text: String) -> UIButton {
         let b = UIButton(type: .system)
         b.setAttributedTitle(NSAttributedString(
-            string: text,
-            attributes: [
-                .underlineStyle: NSUnderlineStyle.single.rawValue,
-                .foregroundColor: UIColor.systemBlue,
-                .font: Typography.mediumLabel(16)
-            ]), for: .normal)
+                string: text,
+                attributes: [
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    .foregroundColor: UIColor.systemBlue,
+                    .font: Typography.mediumLabel(16)
+                ]), for: .normal)
         b.contentHorizontalAlignment = .trailing
         b.contentEdgeInsets = .zero
         b.setContentHuggingPriority(.required, for: .horizontal)
@@ -1155,7 +1208,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
 
         let icon = UIButton(type: .custom)
         let img = UIImage(named: "copy_outline")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         icon.setImage(img, for: .normal)
         icon.tintColor = UIColor(named: "colorCommon6") ?? .label
         icon.adjustsImageWhenHighlighted = true
@@ -1184,8 +1237,8 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 copied?.isHidden = true
             }
         }
-        icon.addAction(UIAction { _ in flashAndCopy() }, for: .touchUpInside)
-        label.addAction(UIAction { _ in flashAndCopy() }, for: .touchUpInside)
+        icon.addAction(UIAction(handler: { _ in flashAndCopy() }), for: .touchUpInside)
+        label.addAction(UIAction(handler: { _ in flashAndCopy() }), for: .touchUpInside)
 
         row.addArrangedSubview(icon)
         row.addArrangedSubview(label)
@@ -1226,12 +1279,12 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         return row
     }
 
-    /// Lone "back" image button. Used inside both `makeBackBar()` and
+    /// Lone "back" image button. Used inside both `makeBackBar` and
     /// the seed-verify top-row (back ◀ ───── Skip).
     private func makeBackButton() -> UIButton {
         let b = UIButton(type: .custom)
         let img = UIImage(named: "arrow_back_circle_outline")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         b.setImage(img, for: .normal)
         b.tintColor = UIColor(named: "colorCommon6") ?? .label
         b.adjustsImageWhenHighlighted = true
@@ -1247,7 +1300,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     private func makeRule() -> UIView {
         let line = UIView()
         line.backgroundColor = (UIColor(named: "colorCommon6") ?? .label)
-            .withAlphaComponent(0.2)
+        .withAlphaComponent(0.2)
         line.translatesAutoresizingMaskIntoConstraints = false
         line.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return line
@@ -1277,27 +1330,28 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// back to the wallets list rather than the password screen.
     private func goBackOneStep() {
         switch step {
-        case .setPassword:
+            case .setPassword:
             return
-        case .createOrRestore:
+            case .createOrRestore:
             // Returning user adding a new wallet? Pop to wallets list.
-            // KeyStore tracks the highest-allocated index (-1 when no
-            // wallet exists yet); anything >= 0 means at least one
-            // wallet is already persisted. First-time setup users
-            // always pass through phoneBackup on the way here, so
-            // back drops them onto that screen.
-            if KeyStore.shared.maxWalletIndex() >= 0 {
+            // The v2 boot state tells us whether a slot file exists
+            // on disk; that is the right signal for "has the user
+            // ever created a wallet?" because the snapshot may not
+            // be loaded yet. First-time setup users always pass
+            // through phoneBackup on the way here, so back drops
+            // them onto that screen.
+            if case .strongboxPresent = UnlockCoordinatorV2.bootState() {
                 (parent as? HomeViewController)?.showWallets()
             } else {
                 step = .phoneBackup
             }
-        case .phoneBackup:
+            case .phoneBackup:
             step = .setPassword
-        case .walletType:
+            case .walletType:
             // Phone Backup now sits earlier in the chain, so wallet
             // type's back goes to create-or-restore unconditionally.
             step = .createOrRestore
-        case .seedLength:
+            case .seedLength:
             // Restore path no longer visits `.walletType`, so back
             // pops to the previous real screen.
             if createNotRestore {
@@ -1305,7 +1359,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
             } else {
                 step = .createOrRestore
             }
-        case .seedShow:
+            case .seedShow:
             // Restore branch comes through .seedLength; create branch
             // comes directly from .walletType.
             if createNotRestore {
@@ -1313,14 +1367,14 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
             } else {
                 step = .seedLength
             }
-        case .seedVerify:
+            case .seedVerify:
             // Re-arm the reveal gate so the words are not auto-shown.
             seedRevealed = false
             step = .seedShow
-        case .confirmWallet:
+            case .confirmWallet:
             // Restore-branch only. Pop back to phrase entry.
             step = .seedShow
-        case .backupOptions:
+            case .backupOptions:
             // Already commited the wallet to the keystore at this point;
             // routing back is harmless because `commitGeneratedWallet`
             // short-circuits when `walletIndex >= 0`.
@@ -1329,7 +1383,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
             } else {
                 step = .confirmWallet
             }
-        case .done:
+            case .done:
             return
         }
     }
@@ -1369,38 +1423,46 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // screen visually matches the home view.
         let copyButton = UIButton(type: .custom)
         let copyImage = UIImage(named: "copy_outline")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         copyButton.setImage(copyImage, for: .normal)
         copyButton.tintColor = UIColor(named: "colorCommon6") ?? .label
         copyButton.imageView?.contentMode = .scaleAspectFit
         copyButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
         copyButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         copyButton.accessibilityLabel = Localization.shared.getCopyByLangValues()
-        copyButton.addAction(UIAction { _ in
-            guard !address.isEmpty else { return }
-            UIPasteboard.general.string = address
-            Toast.showMessage(Localization.shared.getCopiedByLangValues())
-        }, for: .touchUpInside)
+        copyButton.addAction(UIAction(handler: { _ in
+                guard !address.isEmpty else { return }
+                // Wallet-address copy. Lower sensitivity
+                // than a seed phrase (an address is public the moment any
+                // tx involving it lands on chain) but Universal Clipboard
+                // replication of an address still leaks the user's identity
+                // to an attacker who phishes their iCloud account, so the
+                // hardened wrapper applies here too. See Pasteboard.swift.
+                Pasteboard.copySensitive(address)
+                Toast.showMessage(Localization.shared.getCopiedByLangValues())
+            }), for: .touchUpInside)
 
         let exploreButton = UIButton(type: .custom)
         let exploreImage = UIImage(named: "address_explore")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         exploreButton.setImage(exploreImage, for: .normal)
         exploreButton.tintColor = UIColor(named: "colorCommon6") ?? .label
         exploreButton.imageView?.contentMode = .scaleAspectFit
         exploreButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
         exploreButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        exploreButton.addAction(UIAction { _ in
-            guard !address.isEmpty else { return }
-            let base = Self.resolveBlockExplorerBase()
-            guard !base.isEmpty else {
-                Toast.showError(Localization.shared.getNoActiveNetworkByLangValues())
-                return
-            }
-            let url = base + Constants.BLOCK_EXPLORER_ACCOUNT_TRANSACTION_URL
-                .replacingOccurrences(of: "{address}", with: address)
-            if let u = URL(string: url) { UIApplication.shared.open(u) }
-        }, for: .touchUpInside)
+        exploreButton.addAction(UIAction(handler: { _ in
+                guard !address.isEmpty else { return }
+                let base = Self.resolveBlockExplorerBase
+                guard !base().isEmpty else {
+                    Toast.showError(Localization.shared.getNoActiveNetworkByLangValues())
+                    return
+                }
+                // Validated URL composition.
+                if let u = UrlBuilder.blockExplorerAccountUrl(
+                    base: base(), address: address) {
+                    UIApplication.shared.open(u)
+                }
+            }), for: .touchUpInside)
 
         let iconRow = UIStackView(arrangedSubviews: [copyButton, exploreButton, UIView()])
         iconRow.axis = .horizontal
@@ -1488,8 +1550,8 @@ public final class RadioGroup: UIStackView {
         UIView.performWithoutAnimation {
             for (tag, b) in choices {
                 let text = b.title(for: .normal)?
-                    .replacingOccurrences(of: "◯ ", with: "")
-                    .replacingOccurrences(of: "● ", with: "") ?? ""
+                .replacingOccurrences(of: "◯ ", with: "")
+                .replacingOccurrences(of: "● ", with: "") ?? ""
                 b.setTitle((tag == selectedTag ? "● " : "◯ ") + text, for: .normal)
             }
             layoutIfNeeded()
@@ -1503,15 +1565,14 @@ public final class RadioGroup: UIStackView {
 /// Android `home_wallet_fragment.xml:610-700` which puts caption
 /// TextViews on a separate `LinearLayout` row above the word/chip
 /// row, centered with `colorCommonSeed{Letter}` text.
-///
 /// Display mode: chip background = `colorCommonSeed{Letter}`, word
-///   text = white, uppercased.
+/// text = white, uppercased.
 /// Editable mode: chip background = white (catalog `colorCommon7` so it
-///   inverts in dark mode), text = catalog `colorCommon6`, 2pt border
-///   coloured per row (`colorCommonSeed{Letter}`), BIP39 prefix-
-///   autocomplete via `SeedAutoCompleteTextField`. Pressing return on
-///   a chip advances first responder to the next chip - mirroring
-///   Android's `imeOptions="actionNext"` chain.
+/// inverts in dark mode), text = catalog `colorCommon6`, 2pt border
+/// coloured per row (`colorCommonSeed{Letter}`), BIP39 prefix-
+/// autocomplete via `SeedAutoCompleteTextField`. Pressing return on
+/// a chip advances first responder to the next chip - mirroring
+/// Android's `imeOptions="actionNext"` chain.
 public final class SeedChipGrid: UIView {
 
     private let words: [String]
@@ -1536,11 +1597,11 @@ public final class SeedChipGrid: UIView {
         grid.translatesAutoresizingMaskIntoConstraints = false
         addSubview(grid)
         NSLayoutConstraint.activate([
-            grid.topAnchor.constraint(equalTo: topAnchor),
-            grid.bottomAnchor.constraint(equalTo: bottomAnchor),
-            grid.leadingAnchor.constraint(equalTo: leadingAnchor),
-            grid.trailingAnchor.constraint(equalTo: trailingAnchor)
-        ])
+                grid.topAnchor.constraint(equalTo: topAnchor),
+                grid.bottomAnchor.constraint(equalTo: bottomAnchor),
+                grid.leadingAnchor.constraint(equalTo: leadingAnchor),
+                grid.trailingAnchor.constraint(equalTo: trailingAnchor)
+            ])
 
         let columns = 4
         var i = 0
@@ -1622,17 +1683,17 @@ public final class SeedChipGrid: UIView {
             tf.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(tf)
             NSLayoutConstraint.activate([
-                tf.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
-                tf.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
-                tf.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
-                tf.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4)
-            ])
+                    tf.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
+                    tf.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
+                    tf.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
+                    tf.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4)
+                ])
             fields.append(tf)
             tf.tag = fields.count - 1
             tf.onCommit = { [weak self] _ in self?.advanceFocus(after: tf) }
         } else {
             let label = UILabel()
-            label.text = text.uppercased() // mirrors Android `toUpperCase()`
+            label.text = text.uppercased() // mirrors Android `toUpperCase`
             label.textAlignment = .center
             label.font = Typography.mono(13)
             // Android `colorCommon7` (white in light, inverts to black
@@ -1642,11 +1703,11 @@ public final class SeedChipGrid: UIView {
             label.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(label)
             NSLayoutConstraint.activate([
-                label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-                label.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-                label.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 4),
-                label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -4)
-            ])
+                    label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+                    label.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+                    label.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 4),
+                    label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -4)
+                ])
         }
         return container
     }

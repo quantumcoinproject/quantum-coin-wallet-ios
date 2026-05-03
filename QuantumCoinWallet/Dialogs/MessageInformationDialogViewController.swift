@@ -1,9 +1,6 @@
-//
 // MessageInformationDialogViewController.swift
-//
 // Port of Android `MessageInformationDialogFragment` (title + message +
 // Close). Used for quiz wrong-answer, wallet-already-exists, etc.
-//
 
 import UIKit
 
@@ -25,8 +22,8 @@ public final class MessageInformationDialogViewController: ModalDialogViewContro
     private let closeButtonTitle: String?
 
     public init(title: String, message: String,
-                icon: UIImage? = nil, iconTint: UIColor? = nil,
-                closeTitle: String? = nil) {
+        icon: UIImage? = nil, iconTint: UIColor? = nil,
+        closeTitle: String? = nil) {
         self.icon = icon
         self.iconTint = iconTint
         self.closeButtonTitle = closeTitle
@@ -133,11 +130,11 @@ public final class MessageInformationDialogViewController: ModalDialogViewContro
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20)
-        ])
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20)
+            ])
 
         // Apply alpha-dim press feedback to the close button.
         view.installPressFeedbackRecursive()
