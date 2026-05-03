@@ -455,10 +455,11 @@ HomeScreenViewTypeProviding {
             label.text = titles[index]
             label.font = Typography.boldTitle(13)
             label.textColor = UIColor(named: "colorCommon6") ?? .label
-            // Coins column body is left-aligned so the user can read
-            // the value without an awkward center-justified gap; keep
-            // the header aligned to match.
-            label.textAlignment = (index == 1) ? .left : .center
+            // Coins (index 1) and Date (index 2) bodies are left-
+            // aligned so the value/date stack reads naturally next
+            // to the column to its left; keep the headers aligned
+            // to match.
+            label.textAlignment = (index == 1 || index == 2) ? .left : .center
             label.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(label)
             NSLayoutConstraint.activate([
@@ -509,7 +510,8 @@ HomeScreenViewTypeProviding {
                 case 2:
                 fillTextCell(cell,
                     text: formatDate(txn.date),
-                    font: Typography.body(11))
+                    font: Typography.body(11),
+                    alignment: .left)
                 cell.isHidden = isPending
                 case 3:
                 fillTextCell(cell, text: shortHex(from), font: Typography.body(12))

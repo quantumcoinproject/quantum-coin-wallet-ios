@@ -181,7 +181,7 @@ public enum UnlockCoordinatorV2 {
     /// I/O and JSON parse, no scrypt.
     public static func bootState() -> BootState {
         do {
-            guard try StrongboxFileCodec.readWinner != nil else {
+            guard try StrongboxFileCodec.readWinner() != nil else {
                 return .noStrongbox
             }
             return .strongboxPresent
@@ -872,8 +872,8 @@ public enum UnlockCoordinatorV2 {
         winningSlot: AtomicSlotWriter.Slot
     ) {
         do {
-            let wrapKey = try KeychainWrapStore.loadOrCreateWrapKey
-            let wrapEnv = try sealToEnvelope(mainKey, key: wrapKey())
+            let wrapKey = try KeychainWrapStore.loadOrCreateWrapKey()
+            let wrapEnv = try sealToEnvelope(mainKey, key: wrapKey)
             // Bump generation so the persisted slot wins on
             // next read.
             try StrongboxFileCodec.writeNewGeneration(

@@ -38,11 +38,11 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
 
     // Card content
     private let stepLabel = UILabel()
-    private let topDivider = HomeStartViewController.makeDivider
+    private let topDivider = HomeStartViewController.makeDivider()
     private let titleLabel = UILabel()
     private let messageLabel = UILabel()
     private let radioStack = UIStackView()
-    private let bottomDivider = HomeStartViewController.makeDivider
+    private let bottomDivider = HomeStartViewController.makeDivider()
     private let nextButton = GreenPillButton(type: .system)
     private let nextRow = UIStackView()
 
@@ -157,16 +157,16 @@ public final class HomeStartViewController: UIViewController, HomeScreenViewType
         // home_start_fragment.xml.
         cardStack.addArrangedSubview(stepLabel)
         cardStack.setCustomSpacing(20, after: stepLabel)
-        cardStack.addArrangedSubview(topDivider())
-        cardStack.setCustomSpacing(10, after: topDivider())
+        cardStack.addArrangedSubview(topDivider)
+        cardStack.setCustomSpacing(10, after: topDivider)
         cardStack.addArrangedSubview(titleLabel)
         cardStack.setCustomSpacing(10, after: titleLabel)
         cardStack.addArrangedSubview(messageLabel)
         cardStack.setCustomSpacing(10, after: messageLabel)
         cardStack.addArrangedSubview(radioStack)
         cardStack.setCustomSpacing(20, after: radioStack)
-        cardStack.addArrangedSubview(bottomDivider())
-        cardStack.setCustomSpacing(10, after: bottomDivider())
+        cardStack.addArrangedSubview(bottomDivider)
+        cardStack.setCustomSpacing(10, after: bottomDivider)
         cardStack.addArrangedSubview(nextRow)
     }
 

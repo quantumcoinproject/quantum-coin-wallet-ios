@@ -79,28 +79,15 @@ HomeScreenViewTypeProviding {
         let file = makePrimaryButton(L.getBackupToFileByLangValues())
         file.addTarget(self, action: #selector(tapBackupFile), for: .touchUpInside)
 
-        // Right-aligned purple "Next" pill, matching Android
-        // `android:layout_gravity="right"` on the verify / done button
-        // in the backup-options screen. Replaces the old full-width
-        // primary-blue "Done" so the action looks identical to the
-        // home-screen Send / Receive style and the network-add screen.
-        let next = GreenPillButton(type: .system)
-        next.setTitle(L.getNextByLangValues(), for: .normal)
-        next.addTarget(self, action: #selector(tapBackupDone), for: .touchUpInside)
-        next.translatesAutoresizingMaskIntoConstraints = false
-        next.heightAnchor.constraint(equalToConstant: 43).isActive = true
-        next.widthAnchor.constraint(greaterThanOrEqualToConstant: 96).isActive = true
-
-        let nextRow = UIStackView()
-        nextRow.axis = .horizontal
-        nextRow.alignment = .center
-        nextRow.distribution = .fill
-        let spacer = UIView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        nextRow.addArrangedSubview(spacer)
-        nextRow.addArrangedSubview(next)
-
-        [backBar, title, body, makeRule(), cloud, file, makeRule(), nextRow]
+        // No trailing "Next" / "Done" pill on this surface. The user
+        // reached this screen from the already-unlocked Wallets list,
+        // so the only meaningful actions are Cloud / File (each of
+        // which has its own UnlockDialog + completion hand-off) or
+        // the back arrow. The post-create wallet onboarding flow
+        // (`HomeWalletViewController.renderBackupOptions`) keeps its
+        // Next pill because that surface still has a "continue to
+        // home" step after backup.
+        [backBar, title, body, makeRule(), cloud, file]
         .forEach { contentStack.addArrangedSubview($0) }
     }
 
@@ -120,15 +107,6 @@ HomeScreenViewTypeProviding {
 
     @objc private func tapBackupFile() {
         runBackupFlow(target: .file)
-    }
-
-    @objc private func tapBackupDone() {
-        // No unlock gate here. The user reached this screen from the
-        // already-unlocked Wallets list, and Done simply means "I am
-        // finished, take me back". The Reveal / Cloud / File actions
-        // each have their own `UnlockDialog` step where security
-        // matters.
-        (parent as? HomeViewController)?.showWallets()
     }
 
     @objc private func tapBackBar() {

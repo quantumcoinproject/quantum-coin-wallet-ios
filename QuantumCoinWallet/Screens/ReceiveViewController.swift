@@ -194,10 +194,10 @@ public final class ReceiveViewController: UIViewController, HomeScreenViewTypePr
     private static let qrUriScheme = "quantumcoin:"
 
     private static func makeQR(from text: String) -> UIImage? {
-        let f = CIFilter.qrCodeGenerator
-        f().message = Data(text.utf8)
-        f().correctionLevel = "M"
-        guard let out = f().outputImage else { return nil }
+        let f = CIFilter.qrCodeGenerator()
+        f.message = Data(text.utf8)
+        f.correctionLevel = "M"
+        guard let out = f.outputImage else { return nil }
         let scaled = out.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
         let ctx = CIContext()
         guard let cg = ctx.createCGImage(scaled, from: scaled.extent) else { return nil }

@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><title>Bridge</title></head>
 <body>
 <script>
-// M-02: diagnostic console output is gated behind AndroidBridge.isDebug
+// Diagnostic console output is gated behind AndroidBridge.isDebug()
 // so release builds never stringify exception state (which could contain
 // sensitive argument values) into logcat via onConsoleMessage.
 // (audit-grade notes for AI reviewers and human
@@ -27,17 +27,17 @@
 // `AndroidBridge.onResult`, which is the right channel for the
 // detail to reach the developer (and which is itself routed
 // through `Logger.debug` on the Swift side, where it is redacted).
-function _isDebug {
+function _isDebug() {
  try {
  return typeof AndroidBridge !== 'undefined'
  && typeof AndroidBridge.isDebug === 'function'
- && AndroidBridge.isDebug === true;
+ && AndroidBridge.isDebug() === true;
  } catch (_) {
  return false;
  }
 }
 function _categorize(message) {
- var s = String(message || '').toLowerCase;
+ var s = String(message || '').toLowerCase();
  if (s.indexOf('aead') >= 0 || s.indexOf('cipher') >= 0
  || s.indexOf('decrypt') >= 0 || s.indexOf('mac') >= 0) {
  return 'AEAD_FAIL';
@@ -60,15 +60,15 @@ function _categorize(message) {
  return 'OTHER_FAIL';
 }
 window.onerror = function(message, source, lineno, colno, error) {
- if (_isDebug) {
+ if (_isDebug()) {
  console.error('UNCAUGHT_JS [' + _categorize(message) + '] at line ' + lineno);
  }
  return true;
 };
 </script>
-<script src="quantumcoin-bundle.js" onerror="if (_isDebug) console.error('SDK_FAIL: bundle load failed')"></script>
+<script src="quantumcoin-bundle.js" onerror="if (_isDebug()) console.error('SDK_FAIL: bundle load failed')"></script>
 <script>
-if (_isDebug) {
+if (_isDebug()) {
  console.log('Bridge: bundle defined = ' + (typeof QuantumCoinSDK !== 'undefined'));
  if (typeof QuantumCoinSDK === 'undefined') {
  console.error('SDK_FAIL: QuantumCoinSDK undefined post-load');
@@ -119,7 +119,7 @@ function sendResult(requestId, data) {
 
 function sendError(requestId, error) {
  var message = (error && error.message) ? error.message : String(error);
- if (_isDebug) {
+ if (_isDebug()) {
  // Log only the requestId and an opaque
  // category. The raw `message` may contain ciphertext, the
  // failing payload, or part of the user's typed input; we
@@ -152,7 +152,7 @@ async function ensureInitialized(requestId) {
  if (!_sdkInitialized) {
  var result = await QuantumCoinSDK.Initialize(null);
  _sdkInitialized = true;
- if (_isDebug) {
+ if (_isDebug()) {
  // Opaque status only; the SDK Initialize result
  // includes config-derived strings (RPC endpoint URL,
  // chain id) we do not need on Console.
@@ -162,11 +162,11 @@ async function ensureInitialized(requestId) {
  return true;
 }
 
-// MF-02: sensitive payloads (passwords, private keys, seed words)
-// are never interpolated into the evaluateJavascript string. They are
-// staged by the Java side in a ConcurrentHashMap and pulled here.
-// The getPendingPayload call consumes the entry, so replays are
-// rejected (empty payload -> handler fails loud).
+// Sensitive payloads (passwords, private keys, seed words) are never
+// interpolated into the evaluateJavascript string. They are staged by
+// the native side in a thread-safe map and pulled here. The
+// getPendingPayload call consumes the entry, so replays are rejected
+// (empty payload -> handler fails loud).
 function pullPayload(requestId) {
  var raw = null;
  try {
@@ -238,7 +238,7 @@ var bridge = {
  if (!requireSDK(requestId)) return;
  var result = await QuantumCoinSDK.Initialize(null);
  _sdkInitialized = true;
- if (_isDebug) {
+ if (_isDebug()) {
  // Opaque status only.
  console.log('SDK_OK init-offline req=' + requestId);
  }
@@ -447,10 +447,10 @@ var bridge = {
  try {
  out = QuantumCoinSDK.getAddress(address);
  } catch (_) {
- out = String(address || '').toLowerCase;
+ out = String(address || '').toLowerCase();
  }
  } else {
- out = String(address || '').toLowerCase;
+ out = String(address || '').toLowerCase();
  }
  sendResult(requestId, { address: out });
  } catch (e) {
@@ -549,7 +549,7 @@ var bridge = {
  try {
  if (!(await ensureInitialized(requestId))) return;
  if (!requireSeedWordsSDK(requestId)) return;
- var words = SeedWordsSDK.getAllSeedWords;
+ var words = SeedWordsSDK.getAllSeedWords();
  if (!Array.isArray(words) || words.length === 0) {
  sendError(requestId, 'SeedWordsSDK.getAllSeedWords returned empty (seed-words not initialized)');
  return;
@@ -584,7 +584,7 @@ var bridge = {
  if (!(await ensureInitialized(requestId))) return;
  payload = pullPayload(requestId);
  if (!payload) return;
- passwordBytes = new TextEncoder.encode(payload.password);
+ passwordBytes = new TextEncoder().encode(payload.password);
  saltBytes = Uint8Array.from(
  atob(payload.salt), function(c) { return c.charCodeAt(0); });
  hexKey = QuantumCoinSDK.scryptSync(
@@ -597,7 +597,7 @@ var bridge = {
  } catch (e) {
  sendError(requestId, e);
  } finally {
- // L-01: zeroize every intermediate that held the password or
+ // Zeroize every intermediate that held the password or
  // derived material before returning control. JS string
  // immutability means hexKey/keyHex/keyBase64 can't be wiped
  // in place; we drop the references so GC can collect them
