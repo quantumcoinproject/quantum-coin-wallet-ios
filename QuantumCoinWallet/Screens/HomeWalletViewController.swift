@@ -1499,7 +1499,12 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         b.setTitle(title, for: .normal)
         b.titleLabel?.font = Typography.mediumLabel(15)
         b.backgroundColor = UIColor(named: "colorPrimary") ?? .systemBlue
-        b.setTitleColor(.white, for: .normal)
+        // `colorCommon7` is white in light mode and black in dark mode.
+        // Matches the convention already used by `GreenPillButton` /
+        // `GrayPillButton` so the onboarding `Next`, `Backup to Cloud`,
+        // and `Backup to File` titles flip to black in dark mode
+        // instead of staying hard-coded white against the purple pill.
+        b.setTitleColor(UIColor(named: "colorCommon7") ?? .white, for: .normal)
         b.layer.cornerRadius = 10
         b.heightAnchor.constraint(equalToConstant: 44).isActive = true
         return b
@@ -1657,13 +1662,14 @@ public final class SeedChipGrid: UIView {
 
         let container: UIView
         if editable {
-            // Catalog white (`colorCommon7` flips to black in dark mode)
-            // + 2pt coloured border per row, mirroring Android's
-            // `bg_seed_edit_*_curve` (fill colorCommon7, stroke
-            // colorCommonSeed*).
-            let fill = UIColor(named: "colorCommon7") ?? .white
+            // Hard-coded white fill + 2pt coloured border per row,
+            // mirroring Android's `bg_seed_edit_*_curve` (fill white,
+            // stroke colorCommonSeed*). Intentionally NOT using
+            // `colorCommon7` here so the editable cell stays white in
+            // dark mode (Android parity); flipping the fill to black
+            // would clash with the now-fixed colourful borders.
             container = ShapeFactory.roundedRect(
-                fill: fill, cornerRadius: 8,
+                fill: .white, cornerRadius: 8,
                 stroke: rowColor, strokeWidth: 2)
         } else {
             container = ShapeFactory.roundedRect(fill: rowColor, cornerRadius: 8)
@@ -1675,8 +1681,11 @@ public final class SeedChipGrid: UIView {
             tf.text = text.uppercased()
             tf.textAlignment = .center
             tf.font = Typography.mono(13)
-            // colorCommon6: black in light mode, white in dark.
-            tf.textColor = UIColor(named: "colorCommon6") ?? .label
+            // Hard-coded black to pair with the hard-coded white fill
+            // above (Android parity); using `colorCommon6` would flip
+            // the text to white in dark mode and disappear against the
+            // white cell.
+            tf.textColor = .black
             tf.borderStyle = .none
             tf.returnKeyType = .next
             tf.delegate = self
@@ -1696,10 +1705,13 @@ public final class SeedChipGrid: UIView {
             label.text = text.uppercased() // mirrors Android `toUpperCase`
             label.textAlignment = .center
             label.font = Typography.mono(13)
-            // Android `colorCommon7` (white in light, inverts to black
-            // in dark) is the foreground for the chip; using the
-            // catalog reference keeps dark-mode parity automatic.
-            label.textColor = UIColor(named: "colorCommon7") ?? .white
+            // Hard-coded white to match Android's `bg_seed_view_*_curve`
+            // foreground in both light and dark mode. The chip's
+            // background uses `colorCommonSeed*` which now stays the
+            // same vivid colour in both traits, so flipping the
+            // foreground to black via `colorCommon7` in dark mode
+            // would lose contrast on the coloured block.
+            label.textColor = .white
             label.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(label)
             NSLayoutConstraint.activate([

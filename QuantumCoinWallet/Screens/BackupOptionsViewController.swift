@@ -276,7 +276,12 @@ HomeScreenViewTypeProviding {
         b.setTitle(title, for: .normal)
         b.titleLabel?.font = Typography.mediumLabel(15)
         b.backgroundColor = UIColor(named: "colorPrimary") ?? .systemBlue
-        b.setTitleColor(.white, for: .normal)
+        // `colorCommon7` is white in light mode and black in dark mode.
+        // Matches the convention already used by `GreenPillButton` /
+        // `GrayPillButton` so the `Backup to Cloud` and `Backup to File`
+        // titles flip to black in dark mode instead of staying
+        // hard-coded white against the purple pill.
+        b.setTitleColor(UIColor(named: "colorCommon7") ?? .white, for: .normal)
         b.layer.cornerRadius = 10
         b.heightAnchor.constraint(equalToConstant: 44).isActive = true
         return b
