@@ -53,8 +53,6 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Camera access is used to scan QR codes when entering a recipient wallet address.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Photo Library access is used to scan QR codes from saved images.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIBackgroundModes</key>

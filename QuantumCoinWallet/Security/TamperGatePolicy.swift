@@ -19,30 +19,35 @@
 // is caught by the rule documented at the top of `JsBridge`:
 // "the first call inside every JsBridge.sign* entry point".
 // * The user-facing policy is intentionally asymmetric:
-// jailbreak -> INFORMED CONSENT (one-time dialog + banner)
-// debugger -> RECOMMEND-EXIT (per-launch dialog;
-// user can Quit OR
-// Ignore-and-resume)
-// tamper -> RECOMMEND-EXIT (per-launch dialog;
-// user can Quit OR
-// Ignore-and-resume)
-// The asymmetry has shifted: jailbreak detection still uses an
-// informed-consent dialog with a sticky bit. Debugger and
-// runtime-tamper detections present an "exit-recommended"
-// dialog but expose an explicit "Ignore and resume" affordance
-// so a security researcher / power user / developer with
-// legitimate access to the device can keep working. The risk
-// of an opportunistic attacker is mitigated by:
-// (a) the dialog itself ("we strongly recommend you exit"),
-// (b) the persistent red banner installed after the user
-// ignores ("Tampering detected - reduced protection"),
-// (c) the per-launch nature of the override - we do NOT
-// persist the "ignore" choice, so every cold launch
-// re-asks the user, and
-// (d) the same warning is re-evaluated on every signing
-// call so a debugger that attaches AFTER the dialog
-// is still detected on the next signing attempt unless
-// the user has already accepted the override.
+// jailbreak -> INFORMED CONSENT (one-time dialog + banner;
+// user can continue at risk)
+// debugger -> HARD FAIL (per-launch dialog; user can ONLY
+// Quit; signing is non-overridable)
+// tamper -> HARD FAIL (per-launch dialog; user can ONLY
+// Quit; signing is non-overridable)
+// (audit-grade notes for AI reviewers and human auditors):
+// the asymmetry was tightened in QCW-007. Jailbreak detection
+// still uses an informed-consent dialog with a sticky bit -
+// jailbreak signals are heuristic and a single false positive
+// must not brick a legitimately-jailbroken-by-the-user device.
+// Debugger and runtime-tamper detections are HARD signals with
+// negligible false-positive rates (a Release build genuinely
+// should not be debugged; a tampered bundle is unambiguously
+// bad), and the prior behaviour - exposing an "Ignore and
+// resume" action - let an opportunistic attacker who could
+// produce one Frida hook bypass the entire signing-time
+// re-evaluation by tapping that button once. Today the dialog
+// for hard signals offers ONLY "Quit"; `assertSafeToSign`
+// re-evaluates on every call and refuses signing while a hard
+// signal is positive, regardless of any prior UI dismissal.
+// The risk of locking out a legitimate security researcher is
+// mitigated because:
+// (a) DEBUG and simulator builds do not run the hard-fail
+// classifier (see TamperGate file header), so a developer
+// can attach Xcode's debugger normally; and
+// (b) a power user who genuinely wants to instrument a
+// Release build can rebuild from source with
+// `kTamperGateEnabled = false`.
 // * The jailbreak disclosure dialog appears EXACTLY ONCE per
 // device per install. The "I have seen the disclosure" bit is
 // recorded in a Keychain item (`kSecAttrAccessibleWhenUnlocked
@@ -53,27 +58,26 @@
 // resets the consent and re-shows the dialog, which is the
 // correct trade-off: a fresh install has not seen the
 // disclosure, so it should see it.
-// * The hard-fail "Ignore and resume" choice is INTENTIONALLY
-// NOT persisted. Each cold launch re-asks. Persisting it
-// would let an attacker who briefly compromises the device
-// bury the warning forever; per-launch re-prompting keeps the
-// user informed without being annoying mid-session.
+// * The hard-fail dialog has NO "Ignore and resume" affordance
+// since QCW-007. The previous design persisted no override
+// state but the in-process flag was enough to silence
+// `assertSafeToSign` for the rest of the session - which
+// defeated the per-call re-evaluation.
 // Tradeoffs:
 // - The persistent banner consumes ~28pt at the top of the
 // window. In practice that pushes the existing chrome down
 // slightly on a tamper-detected device; acceptable because
 // the user explicitly accepted that trade-off when they
 // tapped "Continue at my own risk" or "Ignore and resume".
-// - "Ignore and resume" weakens the defensive posture from
-// "process exits, attacker stalls" to "process continues,
-// attacker proceeds." The mitigation is twofold: (1) the
-// user is shown a dialog with explicit recommendation to
-// exit AND a persistent red banner explaining the residual
-// risk, and (2) the override is per-launch only. A fully
-// defensive deployment can flip `kTamperGateEnabled = true`
-// and additionally remove the "Ignore and resume" action
-// from `presentHardFailDialog` to restore the strict-exit
-// behaviour.
+// - The hard-fail dialog is now Quit-only (QCW-007). A power
+// user who genuinely wants to debug a Release build can
+// rebuild from source with `kTamperGateEnabled = false`.
+// The legitimate-jailbreak case still has the informed-
+// consent path because jailbreak signals are heuristic
+// (a true positive on a not-jailbroken device must not
+// brick the wallet); the hard signals (debugger, runtime
+// tamper) are unambiguous enough that the exit-only posture
+// is the correct trade.
 // - `exit(0)` is a hard process termination. Apple's Human
 // Interface Guidelines discourage user-initiated process
 // termination, BUT the alternative (leaving the wallet
@@ -138,19 +142,13 @@ public final class TamperGatePolicy: @unchecked Sendable {
     /// Set when a hard-fail decision has been made. Used by
     /// `assertSafeToSign` so a signing attempt fired between the
     /// hard-fail dialog and the `exit(0)` is still blocked.
-    /// Cleared if the user chooses "Ignore and resume" so that
-    /// subsequent signing calls inside the same process do not
-    /// keep re-throwing.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// since QCW-007 there is no "Ignore and resume" action that
+    /// could clear this flag. The flag remains set for the
+    /// remainder of the process lifetime, even after the
+    /// terminate-after-dialog timer fires, so a stray signing
+    /// call in the gap before `exit(0)` is still blocked.
     private var _hardFailReason: String?
-
-    /// Set to `true` after the user explicitly taps "Ignore and
-    /// resume" on a debugger / runtime-tamper hard-fail dialog.
-    /// `assertSafeToSign` consults this flag so signing calls
-    /// proceed for the rest of this process's lifetime even
-    /// though the underlying probe is still positive. Per-launch
-    /// only - we do NOT persist this bit; every cold launch re-
-    /// asks. See file header for the rationale.
-    private var _hardFailOverrideAcceptedThisLaunch: Bool = false
 
     private var jailbreakConsentGivenThisLaunch: Bool {
         get { stateLock.lock(); defer { stateLock.unlock() }; return _jailbreakConsentGivenThisLaunch }
@@ -160,11 +158,6 @@ public final class TamperGatePolicy: @unchecked Sendable {
     private var hardFailReason: String? {
         get { stateLock.lock(); defer { stateLock.unlock() }; return _hardFailReason }
         set { stateLock.lock(); defer { stateLock.unlock() }; _hardFailReason = newValue }
-    }
-
-    private var hardFailOverrideAcceptedThisLaunch: Bool {
-        get { stateLock.lock(); defer { stateLock.unlock() }; return _hardFailOverrideAcceptedThisLaunch }
-        set { stateLock.lock(); defer { stateLock.unlock() }; _hardFailOverrideAcceptedThisLaunch = newValue }
     }
 
     // -----------------------------------------------------------
@@ -280,18 +273,11 @@ public final class TamperGatePolicy: @unchecked Sendable {
                     fallback: "Debugger detected"),
                 message: Self.localized(
                     "tamper-debugger-message",
-                    fallback: "A debugger is attached to this app. We strongly recommend you exit. If you understand the risk, you can ignore this warning and continue."),
-                bannerText: Self.localized(
-                    "tamper-debugger-banner",
-                    fallback: "Debugger detected - reduced protection"),
+                    fallback: "A debugger is attached to this app. For your safety this wallet must exit."),
                 window: window,
                 onQuit: { [weak self] in
                     self?.terminateAfterDialog()
                     completion(false)
-                },
-                onIgnore: { [weak self] in
-                    self?.acceptHardFailOverride()
-                    completion(true)
                 })
 
             case .runtimeTamperDetected:
@@ -303,32 +289,13 @@ public final class TamperGatePolicy: @unchecked Sendable {
                     fallback: "Tampering detected"),
                 message: Self.localized(
                     "tamper-runtime-message",
-                    fallback: "This wallet's signing module has been modified. We strongly recommend you exit and reinstall from the App Store. If you understand the risk, you can ignore this warning and continue."),
-                bannerText: Self.localized(
-                    "tamper-runtime-banner",
-                    fallback: "Tampering detected - reduced protection"),
+                    fallback: "This wallet's signing module has been modified. For your safety this wallet must exit. Please reinstall from the App Store."),
                 window: window,
                 onQuit: { [weak self] in
                     self?.terminateAfterDialog()
                     completion(false)
-                },
-                onIgnore: { [weak self] in
-                    self?.acceptHardFailOverride()
-                    completion(true)
                 })
         }
-    }
-
-    /// Centralized state mutation invoked when the user taps
-    /// "Ignore and resume" on a hard-fail dialog. Clears the
-    /// blocking `hardFailReason` so signing can proceed and sets
-    /// the per-launch override flag so a re-evaluation inside
-    /// `assertSafeToSign` does not block again. Per-launch only;
-    /// we do NOT persist this state.
-    @MainActor
-    private func acceptHardFailOverride() {
-        hardFailOverrideAcceptedThisLaunch = true
-        hardFailReason = nil
     }
 
     // -----------------------------------------------------------
@@ -349,14 +316,15 @@ public final class TamperGatePolicy: @unchecked Sendable {
     public func assertSafeToSign() throws {
         guard Self.kTamperGateEnabled else { return }
 
-        // The user has explicitly accepted the hard-fail risk
-        // earlier in this process via "Ignore and resume". Honor
-        // that for the remaining lifetime of the process. The
-        // override is per-launch only (see file header).
-        if hardFailOverrideAcceptedThisLaunch {
-            return
-        }
-
+        // (audit-grade notes for AI reviewers and human
+        // auditors): the hard-fail signals are non-overridable
+        // since QCW-007. There is no "Ignore and resume" affordance
+        // that could clear `hardFailReason`; the only ways out
+        // of a hard-fail state are (a) the user taps Quit and the
+        // process terminates, or (b) the user re-launches a
+        // shipping Release build with the underlying probe no
+        // longer positive. The signing path therefore re-throws
+        // every call until one of those happens.
         // Defense-in-depth: a hard-fail decision was made at
         // launch but the `exit(0)` 200ms delay has not yet run.
         // Refuse to sign in that gap.
@@ -429,35 +397,27 @@ public final class TamperGatePolicy: @unchecked Sendable {
         presenter.present(alert, animated: true)
     }
 
-    /// Present the debugger / runtime-tamper dialog. Two actions:
+    /// Present the debugger / runtime-tamper dialog. ONE action:
     /// - **Quit** (cancel-style, default-emphasis): invokes
     /// `onQuit`, which terminates the process after the
     /// dismissal animation completes.
-    /// - **Ignore and resume** (destructive-style, lower-
-    /// emphasis): clears the hard-fail state, installs a
-    /// persistent banner so the residual risk stays visible
-    /// for the rest of the session, and invokes `onIgnore`.
-    /// Action style note: `Quit` is the `.cancel` action so it is
-    /// the bold default in iOS's alert layout. The destructive
-    /// style on `Ignore and resume` paints the action red, which
-    /// matches its semantic ("you are choosing to override a
-    /// safety warning"). This is the same UI pattern used by
-    /// system "potentially dangerous" prompts (e.g. "Open
-    /// Untrusted App" in Settings()).
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the dialog used to also offer "Ignore and resume" but
+    /// that affordance was removed in QCW-007. A per-launch
+    /// override is the only path that could let an opportunistic
+    /// attacker dismiss the warning once and proceed; with no
+    /// such affordance, the user's only safe outcome is to Quit.
+    /// A power user who genuinely wants to debug a Release build
+    /// can rebuild from source with `kTamperGateEnabled = false`.
     @MainActor
     private func presentHardFailDialog(on presenter: UIViewController,
         title: String,
         message: String,
-        bannerText: String,
         window: UIWindow?,
-        onQuit: @escaping @MainActor () -> Void,
-        onIgnore: @escaping @MainActor () -> Void) {
+        onQuit: @escaping @MainActor () -> Void) {
         let quitLabel = Self.localized(
             "tamper-quit",
             fallback: "Quit")
-        let ignoreLabel = Self.localized(
-            "tamper-ignore-and-resume",
-            fallback: "Ignore and resume")
 
         let alert = UIAlertController(title: title,
             message: message,
@@ -465,11 +425,6 @@ public final class TamperGatePolicy: @unchecked Sendable {
         alert.addAction(UIAlertAction(title: quitLabel,
                 style: .cancel) { _ in
                 onQuit()
-            })
-        alert.addAction(UIAlertAction(title: ignoreLabel,
-                style: .destructive) { [weak self] _ in
-                self?.installHardFailBanner(in: window, text: bannerText)
-                onIgnore()
             })
         presenter.present(alert, animated: true)
     }
@@ -506,18 +461,10 @@ public final class TamperGatePolicy: @unchecked Sendable {
                 fallback: "Jailbroken device - reduced protection"))
     }
 
-    @MainActor
-    private func installHardFailBanner(in window: UIWindow?, text: String) {
-        installBanner(in: window, text: text)
-    }
-
     /// Idempotent banner installer. Tagged so a second install
-    /// (e.g. jailbreak banner already present, debugger override
-    /// also accepted) is a no-op rather than stacking two
-    /// banners. The single visible banner deliberately reflects
-    /// whichever risk the user accepted FIRST; the dialog the
-    /// user just dismissed is the up-to-date description of the
-    /// composite risk.
+    /// is a no-op. Used today only by the jailbreak path
+    /// (the hard-fail dialogs no longer install a banner because
+    /// they always Quit; see QCW-007).
     @MainActor
     private func installBanner(in window: UIWindow?, text: String) {
         guard let window = window else { return }
@@ -566,20 +513,14 @@ public final class TamperGatePolicy: @unchecked Sendable {
             value = Localization.shared.getTamperContinueAtRiskByLangValues()
             case "tamper-quit":
             value = Localization.shared.getTamperQuitByLangValues()
-            case "tamper-ignore-and-resume":
-            value = Localization.shared.getTamperIgnoreAndResumeByLangValues()
             case "tamper-debugger-title":
             value = Localization.shared.getTamperDebuggerTitleByLangValues()
             case "tamper-debugger-message":
             value = Localization.shared.getTamperDebuggerMessageByLangValues()
-            case "tamper-debugger-banner":
-            value = Localization.shared.getTamperDebuggerBannerByLangValues()
             case "tamper-runtime-title":
             value = Localization.shared.getTamperRuntimeTitleByLangValues()
             case "tamper-runtime-message":
             value = Localization.shared.getTamperRuntimeMessageByLangValues()
-            case "tamper-runtime-banner":
-            value = Localization.shared.getTamperRuntimeBannerByLangValues()
             case "tamper-jailbreak-banner":
             value = Localization.shared.getTamperJailbreakBannerByLangValues()
             default:

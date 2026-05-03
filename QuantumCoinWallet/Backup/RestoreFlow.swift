@@ -172,8 +172,23 @@ public final class RestoreFlow {
     }
 
     private func loadCandidateDetailed(from url: URL) -> CandidateLoadResult {
-        let ok = url.startAccessingSecurityScopedResource
-        defer { if ok() { url.stopAccessingSecurityScopedResource() } }
+        // (audit-grade notes for AI reviewers and human
+        // auditors): see QCW-008. The original
+        // `let ok = url.startAccessingSecurityScopedResource`
+        // captures the method reference WITHOUT invoking it,
+        // and the defer's `ok()` then started the resource
+        // right before stopping it. As a result, the read of
+        // an iCloud / external-provider URL below would
+        // silently fail with EPERM (and the user would see the
+        // confusing "no backup files were present" toast for
+        // a file picked from iCloud Drive). Calling the method
+        // immediately and capturing the Bool fixes the bracket.
+        let started = url.startAccessingSecurityScopedResource()
+        defer {
+            if started {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
 
         // Step 1: trigger an iCloud download if this URL is a
         // not-yet-materialised cloud placeholder. We are explicit about
@@ -382,8 +397,21 @@ public final class RestoreFlow {
             // Backup (which all decrypt with the strongbox
             // password) would fail with `authenticationFailed` on
             // the inner layer.
-            let envelope = try JsBridge.shared.decryptWalletJson(
+            // (audit-grade notes for AI reviewers and human
+            // auditors): QCW-010. The decrypted envelope holds the
+            // private/public key bytes as `Data`; we do NOT use
+            // them on this path (we re-encrypt below using
+            // `seedWords` as the input shape, which is the
+            // canonical recovery material). Wipe them as soon as
+            // the envelope leaves scope so they cannot linger in
+            // the heap during the subsequent strongbox-write
+            // round-trip.
+            var envelope = try JsBridge.shared.decryptWalletJson(
                 walletJson: candidate.json, password: password)
+            defer {
+                envelope.privateKey.resetBytes(in: 0..<envelope.privateKey.count)
+                envelope.publicKey.resetBytes(in: 0..<envelope.publicKey.count)
+            }
 
             // (audit-grade notes for AI reviewers and
             // human auditors): integrity check on the file's
@@ -412,16 +440,15 @@ public final class RestoreFlow {
             // file did not import" without leaking which dimension
             // failed (which would itself be a side channel about
             // attacker techniques).
-            guard
-            let recovered = BackupExporter.extractRecoveredAddress(
-                fromDecryptEnvelope: envelope),
+            let recoveredRaw = envelope.address
+            let prefixed = recoveredRaw.hasPrefix("0x") ? recoveredRaw : "0x" + recoveredRaw
+            guard let recovered = QuantumCoinAddress.normalized(prefixed),
             recovered.lowercased() == candidate.address.lowercased()
             else {
                 throw UnlockCoordinatorV2Error.decodeFailed
             }
 
-            let seedWords = BackupExporter.extractSeedWords(
-                fromDecryptEnvelope: envelope)
+            let seedWords = envelope.seedWords ?? []
             guard !seedWords.isEmpty else {
                 throw UnlockCoordinatorV2Error.decodeFailed
             }

@@ -158,6 +158,10 @@ public final class Localization {
     public func getBackupByLangValues() -> String { langString("backup") }
     public func getBackupPromptByLangValues() -> String { langString("backup-prompt") }
     public func getBackupDescriptionByLangValues() -> String { langString("backup-description") }
+    public func getBackupEncryptedWarningByLangValues() -> String { langString("backup-encrypted-warning") }
+    public func getSeedAccessibilitySummaryByLangValues() -> String { langString("seed-accessibility-summary") }
+    public func getSeedHiddenForCaptureByLangValues() -> String { langString("seed-hidden-for-capture") }
+    public func getAddressChecksumWarningByLangValues() -> String { langString("address-checksum-warning") }
     public func getPhoneBackupByLangValues() -> String { langString("phone-backup") }
     public func getBackupSavedByLangValues() -> String { langString("backup-saved") }
     public func getBackupFailedByLangValues() -> String { langString("backup-failed") }

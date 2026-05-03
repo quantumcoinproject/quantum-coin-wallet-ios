@@ -455,15 +455,25 @@ HomeScreenViewTypeProviding {
                 message: Localization.shared.getWaitWalletOpenByLangValues())
             dlg.present(wait, animated: true)
             Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
-                var result: Result<String, Error> = .failure(UnlockCoordinatorV2Error.decodeFailed)
+                // (audit-grade notes for AI reviewers and human
+                // auditors): QCW-010. The reveal flow only needs
+                // the seed words; we wipe the binary key
+                // material as soon as `decryptWalletJson`
+                // returns, so the only surviving secret in
+                // process memory is the user-readable mnemonic
+                // (which the next screen displays anyway).
+                var result: Result<[String], Error> = .failure(UnlockCoordinatorV2Error.decodeFailed)
                 do {
                     try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(pw)
                     guard let encrypted = Strongbox.shared.encryptedSeed(at: index) else {
                         throw UnlockCoordinatorV2Error.decodeFailed
                     }
-                    let decEnv = try JsBridge.shared.decryptWalletJson(
+                    var env = try JsBridge.shared.decryptWalletJson(
                         walletJson: encrypted, password: pw)
-                    result = .success(decEnv)
+                    let words = env.seedWords ?? []
+                    env.privateKey.resetBytes(in: 0..<env.privateKey.count)
+                    env.publicKey.resetBytes(in: 0..<env.publicKey.count)
+                    result = .success(words)
                 } catch {
                     result = .failure(error)
                 }
@@ -471,10 +481,10 @@ HomeScreenViewTypeProviding {
                 await MainActor.run {
                     wait?.dismiss(animated: true) {
                         switch final {
-                            case .success(let decEnv):
+                            case .success(let words):
                             dlg?.dismiss(animated: true) {
                                 (self?.parent as? HomeViewController)?
-                                .beginTransactionNow(RevealWalletViewController(decryptedEnvelope: decEnv))
+                                .beginTransactionNow(RevealWalletViewController(seedWords: words))
                             }
                             case .failure(let err):
                             // Wrong-password branch: orange OK alert

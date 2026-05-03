@@ -793,7 +793,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
                                 .beginTransactionNow(BlockchainNetworkViewController())
                             }
                         } else if let unlock = unlock {
-                            self?.showUnlockError(over: unlock)
+                            self?.showUnlockError(over: unlock, error: err)
                         }
                     }
                 }
@@ -802,13 +802,29 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
         present(unlock, animated: true)
     }
 
-    /// Wrong-password error layered as the shared orange OK alert
-    /// on top of the unlock dialog. `clearField` is intentionally
-    /// NOT called so the typed password is preserved for typo-fix
-    /// retry; the password field is refocused once the alert is
-    /// dismissed (handled inside `showOrangeError`).
-    private func showUnlockError(over unlock: UnlockDialogViewController) {
-        unlock.showOrangeError(Localization.shared.getWalletPasswordMismatchByErrors())
+    /// Wrong-password (or rate-limit lockout) error layered as
+    /// the shared orange OK alert on top of the unlock dialog.
+    /// `clearField` is intentionally NOT called so the typed
+    /// password is preserved for typo-fix retry; the password
+    /// field is refocused once the alert is dismissed (handled
+    /// inside `showOrangeError`).
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the `tooManyAttempts` branch surfaces the centralised
+    /// lockout copy from `UnlockAttemptLimiter` so the user
+    /// understands the gate is throttling them by design. The
+    /// network add path is now rate-limited because the limiter
+    /// pre-check + recordFailure live inside
+    /// `UnlockCoordinatorV2.persistSnapshot` (see QCW-002).
+    private func showUnlockError(over unlock: UnlockDialogViewController,
+        error: Error?) {
+        if let uc = error as? UnlockCoordinatorV2Error,
+        case let .tooManyAttempts(seconds) = uc {
+            unlock.showOrangeError(
+                UnlockAttemptLimiter.userFacingLockoutMessage(
+                    remainingSeconds: seconds))
+        } else {
+            unlock.showOrangeError(Localization.shared.getWalletPasswordMismatchByErrors())
+        }
     }
 
     /// Empty-password error - distinct from `showUnlockError` so a

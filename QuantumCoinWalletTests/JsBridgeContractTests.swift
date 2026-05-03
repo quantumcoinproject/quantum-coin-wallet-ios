@@ -15,14 +15,19 @@ final class JsBridgeContractTests: XCTestCase {
     func testCreateRandom_returnsThirtyTwoWordsForKeyType3() async throws {
         let ok = await JsEngine.shared.waitUntilReady(timeout: 30)
         XCTAssertTrue(ok, "bridge did not become ready")
-        let envelope = try await JsBridge.shared.createRandomAsync(
+        var envelope = try await JsBridge.shared.createRandomAsync(
             keyType: Constants.KEY_TYPE_DEFAULT)
-        let data = try XCTUnwrap(envelope.data(using: .utf8))
-        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertEqual(obj["success"] as? Bool, true, "bridge reported failure")
-        let inner = try XCTUnwrap(obj["data"] as? [String: Any])
-        let seeds = try XCTUnwrap(inner["seedWords"] as? [String])
+        defer {
+            envelope.privateKey.resetBytes(in: 0..<envelope.privateKey.count)
+            envelope.publicKey.resetBytes(in: 0..<envelope.publicKey.count)
+        }
+        let seeds = try XCTUnwrap(envelope.seedWords)
         XCTAssertEqual(seeds.count, 32, "default key type should produce 32 seed words")
+        XCTAssertFalse(envelope.address.isEmpty, "envelope must include address")
+        XCTAssertFalse(envelope.privateKey.isEmpty,
+            "envelope must include privateKey via binary channel")
+        XCTAssertFalse(envelope.publicKey.isEmpty,
+            "envelope must include publicKey via binary channel")
     }
 
     func testIsValidAddress_rejectsGarbage() async throws {

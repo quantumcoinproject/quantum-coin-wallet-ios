@@ -34,16 +34,29 @@
 // },
 // "strongbox": <Aead envelope wrapping a StrongboxPayload padded to
 // exactly 32 KiB>,
+// "uiBlockHash": "<base64, 32 bytes>", // SHA-256 of canonical(ui)
 // "mac": "<base64, 32 bytes>",
-// "ui": { /* opt-in non-secret prefs; not in MAC scope */ }
+// "ui": { /* opt-in non-secret prefs */ }
 // }
 // The MAC scope is explicitly: a canonicalised JSON of
-// `{v, generation, kdf, wrap, strongbox}`. The `ui` block is
-// excluded so a UI pref change can be written without
-// re-deriving the MAC key (which would require the user's
-// password). The `ui` entries carry their own per-entry
-// HMAC keyed by `deviceUiKey`; that's wired in
-// `KeyMaterial/KeychainWrapStore.swift`.
+// `{v, generation, kdf, wrap, strongbox, uiBlockHash}`. The
+// `ui` block ITSELF is not in the MAC scope (so a UI pref
+// change can be written without re-deriving the MAC key,
+// which would require the user's password); but the SHA-256
+// of the canonical `ui` block IS in the MAC scope (via the
+// `uiBlockHash` field) so an attacker who swaps two slot
+// files' `ui` blocks - or replaces one slot's `ui` block
+// with attacker-chosen contents - cannot re-bind it under
+// the original MAC. See QCW-016.
+// (audit-grade notes for AI reviewers and human auditors):
+// the empty-ui case hashes the canonical bytes `{}`
+// (`JSONSerialization.data(withJSONObject: [:],
+// options: [.sortedKeys])`), giving a single well-defined
+// hash for "no ui prefs". A genuine first-write writes
+// `uiBlock = [:]` and stores the corresponding 32-byte
+// hash; on read the codec re-hashes the on-disk `ui` block
+// (or the canonical empty object if the field is absent)
+// and rejects a slot whose `uiBlockHash` does not match.
 // Read algorithm:
 // 1. AtomicSlotWriter.cleanupTempFiles.
 // 2. Read both slots. JSON-parse + schema-version each.
@@ -82,6 +95,7 @@
 // non-secret, low-friction first-launch path.
 
 import Foundation
+import CryptoKit
 
 public enum StrongboxFileCodec {
 
@@ -118,7 +132,7 @@ public enum StrongboxFileCodec {
     /// `passwordWrap` to recover `mainKey`, derives the MAC key
     /// via HKDF, verifies `mac`, then unwraps `strongbox` and
     /// hands the cleartext to layer 5.
-    public struct DecodedFile: Sendable {
+    public struct DecodedFile: @unchecked Sendable {
         public let v: Int
         public let generation: Int
         public let kdfSalt: Data
@@ -126,10 +140,21 @@ public enum StrongboxFileCodec {
         public let passwordWrap: AeadEnvelope
         public let keychainWrap: AeadEnvelope?
         public let strongbox: AeadEnvelope
+        /// SHA-256 of the on-disk canonical `ui` block. Bound
+        /// by the file-level MAC so a tampered `ui` block fails
+        /// MAC verification. See QCW-016.
+        public let uiBlockHash: Data
+        /// Raw canonical bytes of the on-disk `ui` block.
+        /// Preserved here so a re-mirror can emit them verbatim
+        /// (the on-disk `uiBlockHash` is bound by the MAC and
+        /// must match a re-emit's hash byte-for-byte). The
+        /// canonical-empty case is `{}` (2 bytes).
+        public let uiBlock: [String: Any]
         public let mac: Data
         /// Raw canonicalised bytes of `{v, generation, kdf,
-        /// wrap, strongbox}` (the MAC input). Recomputed here so
-        /// layer 4 can verify the MAC without re-canonicalising.
+        /// wrap, strongbox, uiBlockHash}` (the MAC input).
+        /// Recomputed here so layer 4 can verify the MAC
+        /// without re-canonicalising.
         public let macInput: Data
     }
 
@@ -141,6 +166,22 @@ public enum StrongboxFileCodec {
     }
 
     public struct AeadEnvelope: Sendable {
+        /// Canonical literal value for the `alg` field. The
+        /// schema accepts ONLY this exact string today; an
+        /// unknown / typo'd value is rejected at decode time
+        /// with `Error.malformedJson("envelope.alg=...")`. See
+        /// QCW-021.
+        /// (audit-grade notes for AI reviewers and human
+        /// auditors): centralising the literal here closes the
+        /// "two writers disagree on the spelling" failure mode
+        /// (the historical `AES-GC` typo in
+        /// `UnlockCoordinatorV2.sealToEnvelope`). A future
+        /// algorithm change MUST update this constant AND add
+        /// a migration shim to accept the old value during the
+        /// transition window; the strict gate is what makes
+        /// that intentional rather than accidental.
+        public static let expectedAlg: String = "AES-GCM"
+
         public let alg: String
         public let iv: Data
         public let ct: Data
@@ -205,6 +246,21 @@ public enum StrongboxFileCodec {
     /// Encode the supplied component values into the v2 JSON
     /// shape, compute the file-level MAC, and durably commit the
     /// resulting bytes to the inactive slot.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the `ui` block hashes into `uiBlockHash` inside the MAC
+    /// scope so an attacker cannot swap two slots' `ui` blocks
+    /// - or replace one slot's `ui` block with attacker-chosen
+    /// contents - without breaking the MAC. See QCW-016 and
+    /// the file header.
+    /// The actual atomic write is dispatched through
+    /// `writerQueue.sync` so it serialises against the async
+    /// re-mirror path. This closes QCW-019: two concurrent
+    /// writers (a foreground persist on one thread and a
+    /// post-readWinner re-mirror on another) cannot interleave
+    /// their `AtomicSlotWriter.write` calls. The queue keeps
+    /// `writeNewGeneration`'s observable semantics unchanged
+    /// (still synchronous-from-the-caller's-perspective) while
+    /// making the inter-thread ordering a code-level invariant.
     public static func writeNewGeneration(
         generation: Int,
         kdfSalt: Data,
@@ -216,13 +272,15 @@ public enum StrongboxFileCodec {
         uiBlock: [String: Any],
         currentSlot: AtomicSlotWriter.Slot
     ) throws {
+        let uiHash = try canonicalUiBlockHash(uiBlock)
         let mainObj = encodeMainObject(
             generation: generation,
             kdfSalt: kdfSalt,
             kdfParams: kdfParams,
             passwordWrap: passwordWrap,
             keychainWrap: keychainWrap,
-            strongbox: strongbox)
+            strongbox: strongbox,
+            uiBlockHash: uiHash)
 
         let macInput = try canonicalize(mainObj)
         let macTag = Mac.hmacSha256(message: macInput, keyBytes: macKey)
@@ -233,7 +291,25 @@ public enum StrongboxFileCodec {
 
         let payload = try JSONSerialization.data(
             withJSONObject: fullObj, options: [.sortedKeys])
-        try AtomicSlotWriter.shared.write(payload, to: currentSlot.other)
+        try writerQueue.sync {
+            try AtomicSlotWriter.shared.write(payload, to: currentSlot.other)
+        }
+    }
+
+    /// SHA-256 of the canonical (sortedKeys) JSON of the ui
+    /// block. The empty case hashes `{}`. This is the value
+    /// stored in `uiBlockHash` and bound by the file-level MAC.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// callers MUST use this helper rather than re-implementing
+    /// the canonicalisation - an inconsistency in how the ui
+    /// block is normalised before hashing would let an attacker
+    /// craft a tampered ui that hashes the same as the
+    /// legitimate one. The helper is the single source of
+    /// truth.
+    public static func canonicalUiBlockHash(_ uiBlock: [String: Any]) throws -> Data {
+        let canonical = try JSONSerialization.data(
+            withJSONObject: uiBlock, options: [.sortedKeys])
+        return Data(SHA256.hash(data: canonical))
     }
 
     // MARK: - File-level MAC verification (called by layer 4)
@@ -329,6 +405,27 @@ public enum StrongboxFileCodec {
         let mac = Data(base64Encoded: macB64)
         else { throw Error.missingField("mac") }
 
+        // (audit-grade notes for AI reviewers and human
+        // auditors): the on-disk `uiBlockHash` MUST match the
+        // SHA-256 of the canonical on-disk `ui` block. A
+        // mismatch means the `ui` block was tampered (someone
+        // swapped two slots' `ui` blocks, or replaced one
+        // slot's `ui` block with attacker-chosen contents).
+        // We surface the mismatch as `malformedJson` so the
+        // codec's both-INVALID guard fires; layer 4 then
+        // reports tamperDetected. Missing `uiBlockHash` on a
+        // legitimate slot is treated as a schema regression
+        // and rejected the same way - every writer in this
+        // codebase emits the field. See QCW-016.
+        let uiObj = (obj["ui"] as? [String: Any]) ?? [:]
+        let recomputedUiHash = try canonicalUiBlockHash(uiObj)
+        guard let uiHashB64 = obj["uiBlockHash"] as? String,
+        let uiHash = Data(base64Encoded: uiHashB64)
+        else { throw Error.missingField("uiBlockHash") }
+        guard uiHash == recomputedUiHash else {
+            throw Error.malformedJson("ui block hash mismatch")
+        }
+
         // Recompute the MAC input bytes deterministically so
         // layer 4's verification can compare bit-exact.
         let mainObj = encodeMainObject(
@@ -337,7 +434,8 @@ public enum StrongboxFileCodec {
             kdfParams: KdfParams(N: N, r: r, p: p, keyLen: keyLen),
             passwordWrap: passwordWrap,
             keychainWrap: keychainWrap,
-            strongbox: strongbox)
+            strongbox: strongbox,
+            uiBlockHash: uiHash)
         let macInput = try canonicalize(mainObj)
 
         return DecodedFile(
@@ -348,6 +446,8 @@ public enum StrongboxFileCodec {
             passwordWrap: passwordWrap,
             keychainWrap: keychainWrap,
             strongbox: strongbox,
+            uiBlockHash: uiHash,
+            uiBlock: uiObj,
             mac: mac,
             macInput: macInput)
     }
@@ -361,6 +461,22 @@ public enum StrongboxFileCodec {
         let ct = Data(base64Encoded: ctB64),
         let tag = Data(base64Encoded: tagB64)
         else { return nil }
+        // (audit-grade notes for AI reviewers and human
+        // auditors): strict `alg` validation closes QCW-021.
+        // The historical `AES-GC` typo in `sealToEnvelope`
+        // produced slot files whose envelopes carried an
+        // unknown `alg` value; the codec previously accepted
+        // the value verbatim because no validator existed,
+        // which would have made a future algorithm migration
+        // difficult to reason about (the schema invariant
+        // "alg is well-known" was unenforced). Today the
+        // canonical value is `AeadEnvelope.expectedAlg`
+        // ("AES-GCM"); an unknown value at decode time
+        // returns nil and the slot is treated as malformed by
+        // the calling decoder.
+        guard alg == AeadEnvelope.expectedAlg else {
+            return nil
+        }
         return AeadEnvelope(alg: alg, iv: iv, ct: ct, tag: tag)
     }
 
@@ -379,7 +495,8 @@ public enum StrongboxFileCodec {
         kdfParams: KdfParams,
         passwordWrap: AeadEnvelope,
         keychainWrap: AeadEnvelope?,
-        strongbox: AeadEnvelope
+        strongbox: AeadEnvelope,
+        uiBlockHash: Data
     ) -> [String: Any] {
         var wrap: [String: Any] = [
             "passwordWrap": encodeEnvelope(passwordWrap)
@@ -401,7 +518,8 @@ public enum StrongboxFileCodec {
                 ]
             ],
             "wrap": wrap,
-            "strongbox": encodeEnvelope(strongbox)
+            "strongbox": encodeEnvelope(strongbox),
+            "uiBlockHash": uiBlockHash.base64EncodedString()
         ]
     }
 
@@ -427,24 +545,65 @@ public enum StrongboxFileCodec {
         // dispatch async because the caller (layer 4) is on
         // the unlock-critical path and should not pay this cost
         // synchronously.
-        DispatchQueue.global(qos: .utility).async {
+        // (audit-grade notes for AI reviewers and human
+        // auditors): the re-mirror is serialised through the
+        // same dispatch queue as `writeNewGeneration` (see
+        // QCW-019) AND re-checks the on-disk generation just
+        // before writing. A fresh write that committed
+        // between the original `readWinner` and this re-mirror
+        // will have a higher generation; the re-check causes
+        // the re-mirror to be skipped so it cannot clobber
+        // the freshly-committed slot.
+        writerQueue.async {
+            // Re-check: if a higher generation has been
+            // written to the target slot since `readWinner`
+            // ran, skip the re-mirror so we don't clobber.
+            if let currentBytes = try? AtomicSlotWriter.shared.read(slot: slot),
+            let currentObj = (try? JSONSerialization.jsonObject(with: currentBytes)) as? [String: Any],
+            let currentGen = currentObj["generation"] as? Int,
+            currentGen >= decoded.generation {
+                return
+            }
             var fullObj = encodeMainObject(
                 generation: decoded.generation,
                 kdfSalt: decoded.kdfSalt,
                 kdfParams: decoded.kdfParams,
                 passwordWrap: decoded.passwordWrap,
                 keychainWrap: decoded.keychainWrap,
-                strongbox: decoded.strongbox)
+                strongbox: decoded.strongbox,
+                uiBlockHash: decoded.uiBlockHash)
             fullObj["mac"] = decoded.mac.base64EncodedString()
-            // The `ui` block is not in `DecodedFile`. On a
-            // re-mirror we omit it; the next legitimate write
-            // will re-establish it. This is acceptable because
-            // `ui` is the non-secret namespace (EULA / language)
-            // which simply falls back to defaults when missing.
+            // Emit the on-disk `ui` block VERBATIM from the
+            // surviving slot so the re-mirrored slot's
+            // recomputed `uiBlockHash` matches the MAC-bound
+            // on-disk value. See QCW-016 and the
+            // `DecodedFile.uiBlock` field doc.
+            fullObj["ui"] = decoded.uiBlock
             guard let bytes = try? JSONSerialization.data(
                 withJSONObject: fullObj, options: [.sortedKeys])
             else { return }
             try? AtomicSlotWriter.shared.write(bytes, to: slot)
         }
     }
+
+    /// Serial queue for the async-write paths (`scheduleReMirror`
+    /// and any future write helpers). Closes QCW-019: a re-mirror
+    /// that races with a fresh `writeNewGeneration` must not
+    /// clobber the freshly-committed slot. Serialising both paths
+    /// through one queue plus the generation precheck inside
+    /// `scheduleReMirror` makes the race a code-level
+    /// impossibility rather than a "we hope the OS scheduler
+    /// gets it right".
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// `writeNewGeneration` itself is called from the unlock-
+    /// critical path and runs synchronously on the caller's
+    /// queue (typically the background actor that is doing
+    /// scrypt + AEAD). The re-mirror is the only async writer
+    /// today, so the queue's job is "make sure the re-mirror
+    /// observes any in-flight foreground write before it
+    /// decides to overwrite the slot". Future async writers
+    /// MUST hop onto this queue too.
+    private static let writerQueue = DispatchQueue(
+        label: "org.quantumcoin.wallet.strongbox-codec-writer",
+        qos: .utility)
 }

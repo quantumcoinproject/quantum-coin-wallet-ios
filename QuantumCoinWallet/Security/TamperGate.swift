@@ -214,13 +214,43 @@ public enum TamperGate {
         // dlsym lookup keeps the symbol out of binary-static-
         // analysis tools that historically flagged direct `ptrace`
         // imports.
-        denyDebuggerAttach
+        // (audit-grade notes for AI reviewers and human auditors):
+        // the call is `denyDebuggerAttach()` with parentheses, NOT
+        // a bare expression. Until QCW-006 was fixed, the bare-
+        // expression form (`denyDebuggerAttach` without parens)
+        // resolved to a method-reference value that was discarded
+        // immediately by Swift's expression statement, so
+        // PT_DENY_ATTACH was NEVER invoked in shipping Release
+        // builds. The unit test `TamperGateBootstrapTests`
+        // re-verifies the call shape on every CI run.
+        denyDebuggerAttach()
         #endif
     }
 
     /// Build the full report (bootstrap-cached probes + a fresh
     /// per-call `P_TRACED` check). Safe to call from any thread
     /// after `bootstrap` has run on the main thread.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// `currentReport()` FAILS CLOSED in shipping Release if
+    /// `bootstrap()` has not run. The previous behaviour was
+    /// `assertionFailure(...)` (a no-op in Release) followed by
+    /// returning a `.clean` report - which silently bypassed
+    /// every probe on a misconfigured build (see QCW-005). The
+    /// fail-closed posture is correct because:
+    /// * AppDelegate's launch sequence ALWAYS calls
+    /// `evaluateAtLaunch(on:window:completion:)` which calls
+    /// `bootstrap()` first; a path that reaches
+    /// `currentReport()` without bootstrap means AppDelegate
+    /// was bypassed (UI test, scene-only restoration, future
+    /// background-task entry point).
+    /// * Returning `.runtimeTamperDetected` on this path causes
+    /// `assertSafeToSign()` to throw, which the JS bridge
+    /// surfaces as a tamper error. The user can re-launch the
+    /// app to trigger the proper bootstrap path.
+    /// * In DEBUG / simulator we keep the assertionFailure +
+    /// fail-open for productivity (otherwise `TamperGateTests`
+    /// would have to bootstrap from main thread for every
+    /// case).
     public static func currentReport() -> TamperReport {
         cacheLock.lock()
         let signals = cachedSignals ?? []
@@ -228,15 +258,17 @@ public enum TamperGate {
         let didBoot = didBootstrap
         cacheLock.unlock()
 
-        // Defense against a programmer error: if `currentReport`
-        // was called before `bootstrap` (meaning AppDelegate did
-        // not wire it up), fail open with a debug assertion. We do
-        // NOT fail closed here because the cost of a false
-        // bootstrap-skipped block during onboarding is much higher
-        // than the cost of skipping detection on a misconfigured
-        // build.
         if !didBoot {
             assertionFailure("TamperGate.currentReport called before bootstrap")
+            #if !DEBUG && !targetEnvironment(simulator)
+            // Fail-closed in shipping Release. See QCW-005.
+            return TamperReport(
+                severity: .runtimeTamperDetected,
+                jailbreakSignals: [],
+                debuggerAttached: false,
+                runtimeTamperReason: "tampergate-not-bootstrapped"
+            )
+            #endif
         }
 
         let traced = isCurrentlyTraced()

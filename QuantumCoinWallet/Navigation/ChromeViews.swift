@@ -392,7 +392,12 @@ public final class CenterStripView: UIView {
         let label = UILabel()
         label.text = title
         label.font = Typography.body(12)
-        label.textColor = UIColor(named: "colorCommon1") ?? .label
+        // Match the brand purple used by the symbol column on the
+        // tokens dialog (`HomeMainViewController` line ~429), so the
+        // Send / Receive / Transactions captions read in the same hue
+        // as the asset symbols above the table in both light and dark
+        // mode (`colorPrimary` is identical in both traits).
+        label.textColor = UIColor(named: "colorPrimary") ?? .systemPurple
         label.textAlignment = .center
 
         let col = UIStackView(arrangedSubviews: [card, label])

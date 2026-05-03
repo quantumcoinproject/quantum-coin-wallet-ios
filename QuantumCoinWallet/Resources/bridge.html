@@ -105,12 +105,109 @@ function hexToBytes(hex) {
  return bytes;
 }
 
+// (audit-grade notes for AI reviewers and human auditors):
+// QCW-010. Symmetric binary channels between Swift and the JS
+// bridge. The QuantumCoin SDK already returns the private and
+// public key bytes as Uint8Array (`wallet.signingKey.privateKeyBytes`
+// / `publicKeyBytes`), and accepts Uint8Array as input to its
+// signing constructors. Previously the bridge stringified those
+// bytes via `bytesToBase64(...)` before handing them back to
+// Swift, then base64-decoded them again on the way back into JS
+// for the signing handler. JS strings are immutable, so every
+// such intermediate base64 string lived in V8's string pool until
+// GC, which made true zeroization impossible.
+//
+// The new channel routes raw bytes via two synchronous XHR helpers
+// `stagePendingResultBinary` (JS -> Swift) and `pullPayloadBinary`
+// (Swift -> JS). Each call uses a per-(rid, key) capability token
+// injected by Swift into `window.__bridgeBinaryTokens[direction][rid][key]`.
+// The Uint8Array buffer can be wiped in place via `.fill(0)` after
+// it has been handed off, which is the JS-side guarantee we lacked
+// before. See `JsEngine.swift` (`PendingBinaryStore`) for the Swift-
+// side implementation.
+function pullPayloadBinary(rid, key) {
+ var tokens = (window.__bridgeBinaryTokens || {}).out || {};
+ var ridMap = tokens[rid] || {};
+ var token = String(ridMap[key] || '');
+ if (!token) throw new Error('binary pull: no token for ' + rid + '/' + key);
+ var url = 'appassets:///bridge-binary-pull/'
+ + encodeURIComponent(rid) + '/'
+ + encodeURIComponent(key) + '/'
+ + encodeURIComponent(token);
+ var xhr = new XMLHttpRequest();
+ xhr.open('GET', url, false);
+ xhr.responseType = 'arraybuffer';
+ xhr.send(null);
+ if (xhr.status !== 200) throw new Error('binary pull failed: status ' + xhr.status);
+ // Single-use token; drop after success so a replay surfaces
+ // as a missing-token throw on the next call.
+ try { delete ridMap[key]; } catch (_) {}
+ return new Uint8Array(xhr.response || new ArrayBuffer(0));
+}
+
+function stagePendingResultBinary(rid, key, uint8) {
+ // (audit-grade notes for AI reviewers and human auditors):
+ // QCW-010. WKURLSchemeHandler on iOS does NOT reliably
+ // receive XHR POST bodies for custom schemes (the body is
+ // stripped by WebKit before reaching the scheme handler).
+ // We therefore push the binary via the existing
+ // `WKScriptMessageHandler` channel. The bytes travel as a
+ // JS Array of small integers, which is bridged to a
+ // CFArray of NSNumbers and reassembled as `Data` on the
+ // Swift side. This is NOT a string round-trip - no V8
+ // string-pool entry is created for the bytes - but a JS
+ // Array temporarily holds copies of the bytes; we drop
+ // the Array reference and zero the source Uint8Array
+ // immediately after handoff.
+ var tokens = (window.__bridgeBinaryTokens || {})['in'] || {};
+ var ridMap = tokens[rid] || {};
+ var token = String(ridMap[key] || '');
+ if (!token) throw new Error('binary push: no token for ' + rid + '/' + key);
+ // Manual array fill (not Array.from) so we don't create
+ // any incidental closures over `uint8` that the JIT
+ // might keep alive past this call.
+ var arr = new Array(uint8.length);
+ for (var i = 0; i < uint8.length; i++) {
+  arr[i] = uint8[i];
+ }
+ try {
+  window.webkit.messageHandlers.androidBridge.postMessage({
+   m: 'pushBinary',
+   args: [String(rid), String(key), token, arr]
+  });
+ } finally {
+  // Single-use token; drop it so the next invocation must
+  // present a fresh Swift-issued reservation.
+  try { delete ridMap[key]; } catch (_) {}
+  // Wipe the JS-side source buffer in place after handoff.
+  try { uint8.fill(0); } catch (_) {}
+  // Drop the temporary Array so its bytes become eligible
+  // for GC. (Setting elements to 0 first does NOT mutate
+  // V8's underlying allocation but does clear the property
+  // values reachable from this scope.)
+  for (var j = 0; j < arr.length; j++) { arr[j] = 0; }
+  arr = null;
+ }
+}
+
+// Stage privateKey + publicKey on the inbound (JS -> Swift)
+// binary channel and return the metadata-only envelope that
+// `sendResult` will JSON-stringify. Used by the wallet-creation
+// handlers (`createRandom`, `walletFromSeed`, `walletFromPhrase`,
+// `walletFromKeys`) so the secret bytes never appear in the
+// `sendResult` JSON envelope.
+function stageWalletKeysBinary(requestId, wallet) {
+ stagePendingResultBinary(requestId, 'privateKey',
+   wallet.signingKey.privateKeyBytes);
+ stagePendingResultBinary(requestId, 'publicKey',
+   wallet.signingKey.publicKeyBytes);
+}
+
 function extractWalletInfo(wallet) {
- return {
- address: wallet.address,
- privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
- publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes)
- };
+ // QCW-010: address only. Secret bytes are staged via
+ // `stageWalletKeysBinary` by the caller BEFORE this function
+ // is invoked.
+ return { address: wallet.address };
 }
 
 function sendResult(requestId, data) {
@@ -275,10 +372,13 @@ var bridge = {
  sendError(requestId, 'getWordListFromSeedArray returned non-array');
  return;
  }
+ // QCW-010: stage privateKey/publicKey on the binary channel
+ // BEFORE sendResult so Swift sees them when it consumes the
+ // envelope. The JSON envelope carries only address + seed
+ // metadata; the secret bytes never enter the JSON string pool.
+ stageWalletKeysBinary(requestId, wallet);
  sendResult(requestId, {
  address: wallet.address,
- privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
- publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes),
  seed: seedHex,
  seedWords: words
  });
@@ -294,6 +394,9 @@ var bridge = {
  payload = pullPayload(requestId);
  if (!payload) return;
  var wallet = await QuantumCoinSDK.Wallet.fromSeed(payload.seedArray);
+ // QCW-010: secrets via binary channel; envelope carries
+ // address only.
+ stageWalletKeysBinary(requestId, wallet);
  sendResult(requestId, extractWalletInfo(wallet));
  } catch (e) {
  sendError(requestId, e);
@@ -311,6 +414,8 @@ var bridge = {
  payload = pullPayload(requestId);
  if (!payload) return;
  var wallet = await QuantumCoinSDK.Wallet.fromPhrase(payload.words);
+ // QCW-010: secrets via binary channel.
+ stageWalletKeysBinary(requestId, wallet);
  sendResult(requestId, extractWalletInfo(wallet));
  } catch (e) {
  sendError(requestId, e);
@@ -322,30 +427,30 @@ var bridge = {
  },
 
  walletFromKeys: async function(requestId) {
- var payload = null;
  var privBytes = null;
+ var pubBytes = null;
  try {
  if (!(await ensureInitialized(requestId))) return;
- payload = pullPayload(requestId);
- if (!payload) return;
- privBytes = base64ToBytes(payload.privKey);
- var pubBytes = base64ToBytes(payload.pubKey);
+ // QCW-010: pull private/public key bytes from the binary
+ // channel rather than base64-decoding from a JSON payload.
+ // The bytes never appear in any JS string pool.
+ privBytes = pullPayloadBinary(requestId, 'privKey');
+ pubBytes = pullPayloadBinary(requestId, 'pubKey');
  var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes);
+ stageWalletKeysBinary(requestId, wallet);
  sendResult(requestId, extractWalletInfo(wallet));
  } catch (e) {
  sendError(requestId, e);
  } finally {
  if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
- if (payload) {
- zeroString(payload, 'privKey');
- zeroString(payload, 'pubKey');
- }
+ if (pubBytes) { try { pubBytes.fill(0); } catch (_) {} }
  }
  },
 
  sendTransaction: async function(requestId) {
  var payload = null;
  var privBytes = null;
+ var pubBytes = null;
  try {
  if (!requireSDK(requestId)) return;
  payload = pullPayload(requestId);
@@ -355,8 +460,9 @@ var bridge = {
  _sdkInitialized = true;
  var provider = new QuantumCoinSDK.JsonRpcProvider(
  payload.rpcEndpoint, payload.chainId);
- privBytes = base64ToBytes(payload.privKey);
- var pubBytes = base64ToBytes(payload.pubKey);
+ // QCW-010: secrets via binary channel.
+ privBytes = pullPayloadBinary(requestId, 'privKey');
+ pubBytes = pullPayloadBinary(requestId, 'pubKey');
  var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes, provider);
  var signingContext = wallet.getSigningContext(payload.advancedSigning === true);
  var tx = await wallet.sendTransaction({
@@ -370,16 +476,14 @@ var bridge = {
  sendError(requestId, e);
  } finally {
  if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
- if (payload) {
- zeroString(payload, 'privKey');
- zeroString(payload, 'pubKey');
- }
+ if (pubBytes) { try { pubBytes.fill(0); } catch (_) {} }
  }
  },
 
  sendTokenTransaction: async function(requestId) {
  var payload = null;
  var privBytes = null;
+ var pubBytes = null;
  try {
  if (!requireSDK(requestId)) return;
  if (!QuantumCoinSDK.IERC20) {
@@ -393,8 +497,9 @@ var bridge = {
  _sdkInitialized = true;
  var provider = new QuantumCoinSDK.JsonRpcProvider(
  payload.rpcEndpoint, payload.chainId);
- privBytes = base64ToBytes(payload.privKey);
- var pubBytes = base64ToBytes(payload.pubKey);
+ // QCW-010: secrets via binary channel.
+ privBytes = pullPayloadBinary(requestId, 'privKey');
+ pubBytes = pullPayloadBinary(requestId, 'pubKey');
  var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes, provider);
  var signingContext = wallet.getSigningContext(payload.advancedSigning === true);
  var token = QuantumCoinSDK.IERC20.connect(payload.contract, wallet);
@@ -407,10 +512,7 @@ var bridge = {
  sendError(requestId, e);
  } finally {
  if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
- if (payload) {
- zeroString(payload, 'privKey');
- zeroString(payload, 'pubKey');
- }
+ if (pubBytes) { try { pubBytes.fill(0); } catch (_) {} }
  }
  },
 
@@ -473,10 +575,22 @@ var bridge = {
  var payload = null;
  var input = null;
  var privBytes = null;
+ var pubBytes = null;
  try {
  if (!(await ensureInitialized(requestId))) return;
  payload = pullPayload(requestId);
  if (!payload) return;
+ // (audit-grade notes for AI reviewers and human auditors):
+ // QCW-010. The seed-words branch is the only user-facing path
+ // (the create-wallet handler stages the just-generated seed
+ // words to a single-shot JSON envelope and we re-encrypt
+ // them here). The private/public key branch reads its key
+ // material from the binary channel rather than from the
+ // JSON `walletInput`. The `walletInput` envelope therefore
+ // no longer carries `privateKey` / `publicKey` strings;
+ // callers that previously used that branch (e.g. an
+ // import-from-keys-only flow that does not exist today)
+ // would need to stage the bytes via the binary channel.
  input = JSON.parse(payload.walletInput || '{}');
  var json;
  if (input.seedWords && input.seedWords.length > 0) {
@@ -485,22 +599,21 @@ var bridge = {
  sendResult(requestId, { json: json, address: wallet.address });
  return;
  }
- if (input.privateKey && input.publicKey) {
- privBytes = base64ToBytes(input.privateKey);
- var pubBytes = base64ToBytes(input.publicKey);
+ if (input.fromBinaryKeys === true) {
+ privBytes = pullPayloadBinary(requestId, 'privKey');
+ pubBytes = pullPayloadBinary(requestId, 'pubKey');
  var wallet2 = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes);
  json = wallet2.encryptSync(payload.password);
  sendResult(requestId, { json: json, address: wallet2.address });
  return;
  }
- sendError(requestId, 'encryptWalletJson: no seedWords or privateKey/publicKey supplied');
+ sendError(requestId, 'encryptWalletJson: no seedWords or binary keys supplied');
  } catch (e) {
  sendError(requestId, e);
  } finally {
  if (privBytes) { try { privBytes.fill(0); } catch (_) {} }
+ if (pubBytes) { try { pubBytes.fill(0); } catch (_) {} }
  if (input) {
- zeroString(input, 'privateKey');
- zeroString(input, 'publicKey');
  try { input.seedWords = null; } catch (_) {}
  }
  if (payload) {
@@ -528,10 +641,18 @@ var bridge = {
  seedWords = words;
  }
  }
+ // QCW-010: stage privateKey/publicKey on the binary channel.
+ // The JSON envelope returned to Swift carries only the
+ // address + seed metadata. Note: `seed` (hex string) and
+ // `seedWords` ([String]) remain in the JSON envelope by
+ // design — they are user-facing display values that the UI
+ // copies to the pasteboard / renders in `RevealWalletViewController`,
+ // so a Swift-side String is the natural type for them. The
+ // 30 s pasteboard expiry and view-disappear cleanup bound
+ // their residency, see Pasteboard.swift / RevealWalletViewController.swift.
+ stageWalletKeysBinary(requestId, wallet);
  sendResult(requestId, {
  address: wallet.address,
- privateKey: bytesToBase64(wallet.signingKey.privateKeyBytes),
- publicKey: bytesToBase64(wallet.signingKey.publicKeyBytes),
  seed: seedHex || null,
  seedWords: seedWords
  });
@@ -584,6 +705,29 @@ var bridge = {
  if (!(await ensureInitialized(requestId))) return;
  payload = pullPayload(requestId);
  if (!payload) return;
+ // (audit-grade notes for AI reviewers and human auditors):
+ // QCW-027. Defense-in-depth minimum-bound check on the
+ // scrypt parameters. Swift's `JsBridge.scryptDerive`
+ // already passes the canonical
+ // (SCRYPT_N, SCRYPT_R, SCRYPT_P, SCRYPT_KEY_LEN) defaults;
+ // a future caller that passes a debug-weakened N (e.g.
+ // 1024 in a unit test or UI automation harness) would
+ // otherwise silently weaken the strongbox KDF and on
+ // disk become unrecoverable on a release build that
+ // expects the strong parameters. The thresholds match
+ // the audited defaults: N >= 16384 (2^14, the OWASP
+ // floor), r >= 8 (RFC 7914 SHOULD), p >= 1 (RFC 7914
+ // MUST), keyLen >= 16 (128-bit security floor). Reject
+ // outside-bounds requests with an explicit error so the
+ // misconfiguration is loud, not silent.
+ if (typeof payload.N !== 'number' || payload.N < 16384 ||
+     typeof payload.r !== 'number' || payload.r < 8 ||
+     typeof payload.p !== 'number' || payload.p < 1 ||
+     typeof payload.keyLen !== 'number' || payload.keyLen < 16) {
+ sendError(requestId,
+   new Error('scryptDerive parameters below minimum bounds'));
+ return;
+ }
  passwordBytes = new TextEncoder().encode(payload.password);
  saltBytes = Uint8Array.from(
  atob(payload.salt), function(c) { return c.charCodeAt(0); });

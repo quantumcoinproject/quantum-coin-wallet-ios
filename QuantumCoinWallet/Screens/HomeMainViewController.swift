@@ -81,6 +81,15 @@ UITableViewDelegate {
     private let headerView = UIView()
     private let table = UITableView()
     private let scrollIndicator = VerticalScrollIndicatorView()
+    /// Bold "Tokens" title rendered ABOVE the card. Mirrors Android
+    /// `textView_tokenList_title` in `home_main_fragment.xml` (bold
+    /// 14dp, `colorCommon6`) and is hidden together with the card
+    /// whenever the wallet has no tokens to show on the active
+    /// network -- see `applyEmptyState()` which gates visibility on
+    /// `items.isEmpty` so an empty wallet renders nothing under the
+    /// Send / Receive strip (matching `HomeMainFragment.renderEmptyState`
+    /// in the Android client).
+    private let tokensTitleLabel = UILabel()
     private var items: [AccountTokenSummary] = []
     private var nextPage = 1
     private var loading = false
@@ -112,6 +121,16 @@ UITableViewDelegate {
         // a horizontal bar when more columns are off-screen and a
         // vertical bar (alongside the custom thumb) on the inner
         // table.
+        // Bold "Tokens" title sits OUTSIDE the horizontally-scrollable
+        // card so it stays put when the user pans through the column
+        // strip (Android parity: title lives in the parent
+        // `tokenList_container`, not the inner `HorizontalScrollView`).
+        tokensTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        tokensTitleLabel.text = Localization.shared.getTokensByLangValues()
+        tokensTitleLabel.font = Typography.boldTitle(14)
+        tokensTitleLabel.textColor = UIColor(named: "colorCommon6") ?? .label
+        view.addSubview(tokensTitleLabel)
+
         horizontalScrollView.translatesAutoresizingMaskIntoConstraints = false
         horizontalScrollView.alwaysBounceHorizontal = true
         horizontalScrollView.alwaysBounceVertical = false
@@ -160,13 +179,26 @@ UITableViewDelegate {
         view.addSubview(scrollIndicator)
 
         NSLayoutConstraint.activate([
+                // Title pinned to the top of the view, indented by the
+                // same `cardInset` that frames the card below so the
+                // text aligns flush with the card's leading edge.
+                // Android `home_main_fragment.xml` reserves
+                // `paddingTop="12dp"` and `paddingBottom="8dp"` around
+                // the title; we mirror that with a small leading top
+                // gap and 8pt of breathing room before the card.
+                tokensTitleLabel.topAnchor.constraint(equalTo: view.topAnchor, constant: 4),
+                tokensTitleLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.cardInset),
+                tokensTitleLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Self.cardInset),
+
                 // Horizontal scroller is inset on bottom + leading +
                 // trailing by `cardInset` so the rounded card border is
-                // visible on every edge. Top stays flush with `view` so
-                // the strip directly above the card meets the card edge
-                // without a visual gap. The trailing inset also doubles
-                // as the gutter for the custom vertical scroll indicator.
-                horizontalScrollView.topAnchor.constraint(equalTo: view.topAnchor),
+                // visible on every edge. Top sits 8pt below the
+                // "Tokens" title (Android paddingBottom on the title)
+                // so the card chrome reads as a labelled section
+                // rather than a floating panel. The trailing inset
+                // also doubles as the gutter for the custom vertical
+                // scroll indicator.
+                horizontalScrollView.topAnchor.constraint(equalTo: tokensTitleLabel.bottomAnchor, constant: 8),
                 horizontalScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -Self.cardInset),
                 horizontalScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: Self.cardInset),
                 horizontalScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -Self.cardInset),
@@ -279,15 +311,21 @@ UITableViewDelegate {
         loadNextPage()
     }
 
-    /// Hide the entire token-table card whenever the wallet has
-    /// no tokens to show on the active network. Without this, an
-    /// empty rounded card with just the column-header row would
-    /// linger on the home screen even when there is nothing to
-    /// list - a confusing "broken UI" affordance. Toggled instead
-    /// of removed from the view hierarchy so the layout stays
-    /// stable across reloads / network switches.
+    /// Hide the entire token-table card AND the bold "Tokens"
+    /// section title whenever the wallet has no tokens to show on
+    /// the active network. Without this, an empty rounded card
+    /// with just the column-header row (or a stranded "Tokens"
+    /// label sitting above an empty area) would linger on the
+    /// home screen even when there is nothing to list - a
+    /// confusing "broken UI" affordance. Mirrors Android
+    /// `HomeMainFragment.renderEmptyState` which gates BOTH the
+    /// `textView_tokenList_title` and the scrollable card on the
+    /// `items.isEmpty()` flag. Toggled instead of removed from
+    /// the view hierarchy so the layout stays stable across
+    /// reloads / network switches.
     private func applyEmptyState() {
         let isEmpty = items.isEmpty
+        tokensTitleLabel.isHidden = isEmpty
         horizontalScrollView.isHidden = isEmpty
         scrollIndicator.isHidden = isEmpty
     }
