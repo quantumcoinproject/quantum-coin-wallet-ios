@@ -1727,6 +1727,16 @@ public final class SeedChipGrid: UIView {
     /// Caption label `A1`..`L4` rendered above the word cell row.
     /// Centered, 11pt, tinted `colorCommonSeed{Letter}` (block colour),
     /// matching Android `textView_home_seed_words_view_caption_*`.
+    /// Row H is a dark-mode special case: `colorCommonSeedH` is pure
+    /// `#000000` in BOTH light and dark variants of the asset (Android
+    /// parity), so painting the H1..H4 captions with that asset would
+    /// render invisible black text against the near-black backdrop in
+    /// dark mode. Swap the H row to `colorCommon6` (black light /
+    /// white dark) so the captions stay legible in either appearance;
+    /// every other row keeps its vivid block colour because that
+    /// already contrasts against both light and dark backgrounds.
+    /// `UILabel.textColor` is trait-aware, so the swap reacts
+    /// automatically when the user toggles dark mode at runtime.
     private func captionLabel(for index: Int) -> UILabel {
         let letter = Self.letter(for: index)
         let column = (index % 4) + 1
@@ -1734,7 +1744,11 @@ public final class SeedChipGrid: UIView {
         l.text = "\(letter)\(column)"
         l.font = Typography.body(11)
         l.textAlignment = .center
-        l.textColor = UIColor(named: "colorCommonSeed\(letter)") ?? .label
+        let captionColor: UIColor =
+            (letter == "H"
+             ? (UIColor(named: "colorCommon6") ?? .label)
+             : (UIColor(named: "colorCommonSeed\(letter)") ?? .label))
+        l.textColor = captionColor
         return l
     }
 
@@ -1744,15 +1758,44 @@ public final class SeedChipGrid: UIView {
 
         let container: UIView
         if editable {
-            // Hard-coded white fill + 2pt coloured border per row,
-            // mirroring Android's `bg_seed_edit_*_curve` (fill white,
-            // stroke colorCommonSeed*). Intentionally NOT using
-            // `colorCommon7` here so the editable cell stays white in
-            // dark mode (Android parity); flipping the fill to black
-            // would clash with the now-fixed colourful borders.
-            container = ShapeFactory.roundedRect(
-                fill: .white, cornerRadius: 8,
-                stroke: rowColor, strokeWidth: 2)
+            if letter == "H" {
+                // Dark-mode special case for the all-black H row.
+                // `colorCommonSeedH` is `#000000` in BOTH variants
+                // (Android parity), so a `ShapeFactory.roundedRect`
+                // stroke painted with that asset disappears against
+                // the dark page backdrop in dark mode. Instead use
+                // `colorCommon6` (black light / white dark) and a
+                // tiny `_DynamicBorderRoundedRect` subclass that
+                // re-resolves `layer.borderColor` on every trait
+                // collection change - `CALayer.borderColor` is a
+                // `CGColor` snapshot and would not otherwise update
+                // when the user toggles appearance at runtime. The
+                // hard-coded white fill + black foreground (set in
+                // the editable text-field branch below) is preserved
+                // in BOTH appearances so this cell stays
+                // visually identical to the Android editable seed
+                // chip; only the border swaps.
+                let v = _DynamicBorderRoundedRect()
+                v.backgroundColor = .white
+                v.layer.cornerRadius = 8
+                v.layer.borderWidth = 2
+                v.layer.masksToBounds = true
+                v.dynamicBorderColor = UIColor(named: "colorCommon6") ?? .label
+                container = v
+            } else {
+                // Hard-coded white fill + 2pt coloured border per
+                // row, mirroring Android's `bg_seed_edit_*_curve`
+                // (fill white, stroke colorCommonSeed*). Intentionally
+                // NOT using `colorCommon7` here so the editable cell
+                // stays white in dark mode (Android parity); flipping
+                // the fill to black would clash with the colourful
+                // borders. Non-H rows use a fixed vivid stroke that
+                // already reads against either appearance, so a plain
+                // `ShapeFactory.roundedRect` snapshot border is fine.
+                container = ShapeFactory.roundedRect(
+                    fill: .white, cornerRadius: 8,
+                    stroke: rowColor, strokeWidth: 2)
+            }
         } else {
             container = ShapeFactory.roundedRect(fill: rowColor, cornerRadius: 8)
         }
@@ -1851,6 +1894,35 @@ extension SeedChipGrid: UITextFieldDelegate {
     public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         advanceFocus(after: textField)
         return true
+    }
+}
+
+/// Tiny `UIView` whose `layer.borderColor` tracks an asset-catalog
+/// `UIColor` across trait-collection (light / dark) changes.
+///
+/// `CALayer.borderColor` stores a raw `CGColor`, which is a snapshot
+/// of whatever the resolving trait collection produced at assignment
+/// time and does NOT update when the user toggles dark mode at
+/// runtime. Plain `view.layer.borderColor = uiColor.cgColor` is fine
+/// for static colours but breaks for dynamic asset colours like
+/// `colorCommon6` (black light / white dark). This subclass fixes
+/// that by holding the source `UIColor` and re-resolving it inside
+/// `traitCollectionDidChange(_:)`. Used by `SeedChipGrid` for the
+/// all-black H seed row's editable border so the stroke flips from
+/// black to white when the user enters dark mode.
+fileprivate final class _DynamicBorderRoundedRect: UIView {
+    var dynamicBorderColor: UIColor? {
+        didSet { refreshBorder() }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        refreshBorder()
+    }
+
+    private func refreshBorder() {
+        layer.borderColor = dynamicBorderColor?
+            .resolvedColor(with: traitCollection).cgColor
     }
 }
 

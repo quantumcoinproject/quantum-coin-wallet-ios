@@ -276,6 +276,43 @@ final class SecurityFixesTests: XCTestCase {
             + "decrease the stored counter (anti-rollback invariant).")
     }
 
+    /// `reset()` MUST clear the stored counter so a subsequent
+    /// `read()` returns nil (the canonical "no prior state"
+    /// signal used by the unlock-time seed path). This is the
+    /// invariant that fixes the "first-unlock-after-create
+    /// always fails" symptom on simulator rebuilds and on any
+    /// future explicit factory-reset flow: without the reset,
+    /// `createNewStrongbox` would no-op the bump (because the
+    /// stale counter from a prior wallet is already higher
+    /// than 1), and the very next unlock would fail
+    /// `disk_gen=1 < counter=N` and surface as "tamper
+    /// detected".
+    func testKeychainGenerationCounterResetClearsEntry() throws {
+        // Seed the counter with an arbitrary high value so the
+        // assertion is meaningful even on a fresh simulator.
+        try KeychainGenerationCounter.bump(to: 100_000)
+        XCTAssertNotNil(try KeychainGenerationCounter.read(),
+            "precondition: counter must be present after bump")
+        try KeychainGenerationCounter.reset()
+        XCTAssertNil(try KeychainGenerationCounter.read(),
+            "reset() must clear the stored counter so a fresh "
+            + "createNewStrongbox can re-seed from generation 1 "
+            + "without tripping the rollback gate.")
+        // Idempotent: a second reset on an already-empty store
+        // must NOT throw.
+        XCTAssertNoThrow(try KeychainGenerationCounter.reset(),
+            "reset() must be idempotent (true first launch has no "
+            + "entry to delete).")
+        // After reset, a fresh bump(to: 1) MUST take effect (the
+        // monotonic guard is anchored on the post-reset
+        // baseline of 0).
+        try KeychainGenerationCounter.bump(to: 1)
+        XCTAssertEqual(try KeychainGenerationCounter.read(), 1,
+            "post-reset bump(to: 1) must succeed; this is the "
+            + "exact sequence createNewStrongbox runs to seed the "
+            + "counter for a brand-new wallet.")
+    }
+
     // MARK: - Helpers
 
     /// Snapshot the limiter state via the public API so the

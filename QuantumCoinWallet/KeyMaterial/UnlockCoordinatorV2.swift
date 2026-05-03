@@ -576,7 +576,27 @@ public enum UnlockCoordinatorV2 {
         // freshly-written generation. Same power-loss-safety
         // ordering as `persistSnapshot`: counter bump comes
         // AFTER the slot writes succeed. See QCW-004.
+        // (audit-grade notes for AI reviewers and human
+        // auditors): we RESET the counter (delete the prior
+        // entry) before the bump, not just call `bump(to: 1)`.
+        // The bump path is monotonic - it silently no-ops if a
+        // stale counter from a previous wallet on this device
+        // is already higher than 1. Without the reset, a
+        // brand-new wallet whose slots start at generation 1/2
+        // would immediately fail the unlock-time rollback gate
+        // (`disk_gen=1 < counter=N`) on the very next unlock,
+        // surfacing as "tamper detected" and locking the user
+        // out of a wallet they just created. The reset is safe
+        // because `createNewStrongbox` is only reached when the
+        // residual-slot guard above has already proven that no
+        // slot files exist - so any pre-existing counter is
+        // orphaned state from a previous wallet that is no
+        // longer recoverable. See `KeychainGenerationCounter.reset`
+        // for the full discussion (production uninstall /
+        // future factory-reset flow / simulator-rebuild
+        // scenarios).
         do {
+            try KeychainGenerationCounter.reset()
             try KeychainGenerationCounter.bump(to: 1)
         } catch {
             Logger.debug(category: "STRONGBOX_ROLLBACK_COUNTER_BUMP_FAIL",

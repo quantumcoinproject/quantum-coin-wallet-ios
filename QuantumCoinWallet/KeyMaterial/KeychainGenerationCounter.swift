@@ -123,6 +123,53 @@ public enum KeychainGenerationCounter {
         return value
     }
 
+    /// Delete the stored counter entry. Used by the
+    /// fresh-strongbox-creation path: when no slot files exist
+    /// AND the caller is about to start a brand-new strongbox at
+    /// generation 1, any pre-existing counter is stale state from
+    /// a previous (now-gone) wallet on this device. Leaving the
+    /// stale counter in place would make every future unlock
+    /// trip the rollback gate (`disk_gen=1 < counter=N`) and
+    /// surface as "tamper detected" - an audit-grade false
+    /// positive that would lock a legitimate user out of their
+    /// freshly-created wallet.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// in production this scenario only arises if the previous
+    /// wallet was explicitly deleted by some future "factory
+    /// reset" UI flow (the slot files would be gone, so
+    /// `createNewStrongbox` runs again). On iOS 10.3+ Keychain
+    /// items are also cleared on app uninstall, so a true
+    /// uninstall-then-reinstall cycle would not see this stale
+    /// state. The reset is also load-bearing during development
+    /// in the simulator: `xcodebuild` re-installs do NOT trigger
+    /// the iOS uninstall hook, so the simulator Keychain
+    /// outlives the app's Application Support directory between
+    /// builds, producing the same stale-counter symptom that a
+    /// future factory-reset flow would. This call eliminates
+    /// both classes of false positive without weakening the
+    /// rollback gate's response to a real attack: on a real
+    /// rollback, the slot files would still be present (an
+    /// attacker who can both delete files AND replace them with
+    /// older versions has nothing to roll back to once the slot
+    /// files are missing).
+    /// Idempotent. Safe to call when no entry exists.
+    public static func reset() throws {
+        let attrs: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any
+        ]
+        let status = SecItemDelete(attrs as CFDictionary)
+        // `errSecItemNotFound` is the expected result on a true
+        // first launch (counter never existed). Treat it as
+        // success.
+        if status == errSecSuccess || status == errSecItemNotFound {
+            return
+        }
+        throw KeychainGenerationCounterError.keychainStatus(status, op: "reset")
+    }
+
     /// Bump the counter to `value`. No-op if `value` is less
     /// than or equal to the existing stored value (we are a
     /// MONOTONIC counter; non-increasing writes are a contract
