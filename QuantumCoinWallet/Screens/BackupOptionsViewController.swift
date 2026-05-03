@@ -1,31 +1,26 @@
-//
 // BackupOptionsViewController.swift
-//
 // Full-screen Backup Options surface launched from the Wallets list
 // when the user taps the blue Backup tile next to a row. Mirrors the
 // chrome of `HomeWalletViewController.renderBackupOptions` (back bar +
 // title + description + rule + Cloud + File + rule + Done) so the
 // flow visually matches the first-time onboarding "backup options"
 // screen rather than appearing as a modal action sheet.
-//
 // Mechanics match the first-time pipeline through `BackupExporter`:
-//   1. (Cloud only) show the cloud-backup info dialog.
-//   2. `UnlockDialogViewController` -> validate the vault password.
-//   3. `KeyStore.readWallet(index:)` + `JsBridge.decryptWalletJson` to
-//      recover the seed phrase for the chosen wallet.
-//   4. `BackupPasswordDialog` -> collect a fresh backup password.
-//   5. `BackupExporter.reencryptAndExport` -> re-encrypt under the new
-//      password and hand off to `CloudBackupManager` for cloud / file.
-//
+// 1. (Cloud only) show the cloud-backup info dialog.
+// 2. `UnlockDialogViewController` -> validate the strongbox password.
+// 3. `Strongbox.encryptedSeed(at:)` + `JsBridge.decryptWalletJson`
+// to recover the seed phrase for the chosen wallet.
+// 4. `BackupPasswordDialog` -> collect a fresh backup password.
+// 5. `BackupExporter.reencryptAndExport` -> re-encrypt under the new
+// password and hand off to `CloudBackupManager` for cloud / file.
 // Android references:
-//   WalletsFragment.onWalletExportClick (unlock first, then choose)
-//   HomeWalletFragment.showBackupOptionsScreen (UI parity)
-//
+// WalletsFragment.onWalletExportClick (unlock first, then choose)
+// HomeWalletFragment.showBackupOptionsScreen (UI parity)
 
 import UIKit
 
 public final class BackupOptionsViewController: UIViewController,
-                                                HomeScreenViewTypeProviding {
+HomeScreenViewTypeProviding {
 
     public var screenViewType: ScreenViewType { .innerFragment }
 
@@ -55,16 +50,16 @@ public final class BackupOptionsViewController: UIViewController,
         view.addSubview(scroll)
 
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            contentStack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 20),
-            contentStack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -20),
-            contentStack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -20),
-            contentStack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -40)
-        ])
+                scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+                contentStack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 20),
+                contentStack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -20),
+                contentStack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 20),
+                contentStack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -20),
+                contentStack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -40)
+            ])
 
         renderBackupOptions()
 
@@ -106,7 +101,7 @@ public final class BackupOptionsViewController: UIViewController,
         nextRow.addArrangedSubview(next)
 
         [backBar, title, body, makeRule(), cloud, file, makeRule(), nextRow]
-            .forEach { contentStack.addArrangedSubview($0) }
+        .forEach { contentStack.addArrangedSubview($0) }
     }
 
     // MARK: - Actions
@@ -143,20 +138,20 @@ public final class BackupOptionsViewController: UIViewController,
     // MARK: - Cloud / File pipeline
 
     /// Step 1 of the export pipeline: present `UnlockDialogViewController`
-    /// to validate the vault password. On success, decrypt the slot's
+    /// to validate the strongbox password. On success, decrypt the slot's
     /// wallet JSON to recover the seed phrase, then chain into the
     /// backup-password dialog. The unlock + scrypt + decrypt round-trip
     /// can take several seconds, so a `WaitDialogViewController` is
-    /// presented over the unlock dialog with `getWaitUnlockByLangValues()`
+    /// presented over the unlock dialog with `getWaitUnlockByLangValues`
     /// while the work runs - mirroring the pattern used by
-    /// `HomeWalletViewController.presentUnlockThen`. Wrong vault
+    /// `HomeWalletViewController.presentUnlockThen`. Wrong strongbox
     /// password leaves the unlock dialog up with the same inline error
     /// + cleared field UX used by `WalletsViewController.revealWallet`.
     private func runBackupFlow(target: BackupTarget) {
         let dlg = UnlockDialogViewController()
-        dlg.onUnlock = { [weak self, weak dlg] vaultPassword in
+        dlg.onUnlock = { [weak self, weak dlg] strongboxPassword in
             guard let self = self, let dlg = dlg else { return }
-            if vaultPassword.isEmpty {
+            if strongboxPassword.isEmpty {
                 dlg.showOrangeError(Localization.shared.getEmptyPasswordByErrors())
                 return
             }
@@ -166,19 +161,20 @@ public final class BackupOptionsViewController: UIViewController,
             let walletIndex = self.walletIndex
             Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
                 var result: Result<(seed: [String], address: String), Error> =
-                    .failure(KeyStoreError.decodeFailed)
+                .failure(UnlockCoordinatorV2Error.decodeFailed)
                 do {
-                    try KeyStore.shared.unlock(password: vaultPassword)
-                    let encryptedJson = try KeyStore.shared.readWallet(
-                        index: walletIndex, password: vaultPassword)
+                    try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(strongboxPassword)
+                    guard let encryptedJson = Strongbox.shared.encryptedSeed(at: walletIndex) else {
+                        throw UnlockCoordinatorV2Error.decodeFailed
+                    }
                     let envelope = try JsBridge.shared.decryptWalletJson(
-                        walletJson: encryptedJson, password: vaultPassword)
+                        walletJson: encryptedJson, password: strongboxPassword)
                     let seedWords = BackupExporter.extractSeedWords(
                         fromDecryptEnvelope: envelope)
                     guard !seedWords.isEmpty else {
-                        throw KeyStoreError.decodeFailed
+                        throw UnlockCoordinatorV2Error.decodeFailed
                     }
-                    let address = KeyStore.shared.address(forIndex: walletIndex) ?? ""
+                    let address = Strongbox.shared.address(forIndex: walletIndex) ?? ""
                     result = .success((seedWords, address))
                 } catch {
                     result = .failure(error)
@@ -187,20 +183,31 @@ public final class BackupOptionsViewController: UIViewController,
                 await MainActor.run {
                     wait?.dismiss(animated: true) {
                         switch final {
-                        case .success(let payload):
+                            case .success(let payload):
                             dlg?.dismiss(animated: true) {
                                 self?.promptBackupPasswordAndExport(
                                     target: target,
                                     seed: payload.seed,
                                     address: payload.address)
                             }
-                        case .failure:
+                            case .failure(let err):
                             // Wrong-password branch: orange OK alert
                             // layered on top of the unlock dialog;
                             // typed password preserved (no
-                            // `clearField()`).
-                            dlg?.showOrangeError(
-                                Localization.shared.getWalletPasswordMismatchByErrors())
+                            // `clearField`).
+                            // Distinguish brute-
+                            // force lockout from regular wrong-
+                            // password.
+                            if let uc = err as? UnlockCoordinatorV2Error,
+                            case let .tooManyAttempts(seconds) = uc {
+                                dlg?.showOrangeError(
+                                    UnlockAttemptLimiter
+                                    .userFacingLockoutMessage(
+                                        remainingSeconds: seconds))
+                            } else {
+                                dlg?.showOrangeError(
+                                    Localization.shared.getWalletPasswordMismatchByErrors())
+                            }
                         }
                     }
                 }
@@ -213,13 +220,13 @@ public final class BackupOptionsViewController: UIViewController,
     /// password, then delegate to `BackupExporter` for the re-encrypt
     /// + cloud-folder / share-sheet hand-off.
     private func promptBackupPasswordAndExport(target: BackupTarget,
-                                               seed: [String],
-                                               address: String) {
+        seed: [String],
+        address: String) {
         // Pass `address` so the dialog's hidden `.username` field
         // can scope the iOS Keychain Save prompt to a per-wallet
         // slot (see `CredentialIdentifier.backupUsername(address:)`),
         // preventing this Save from overwriting another wallet's
-        // backup credential or the vault credential.
+        // backup credential or the strongbox credential.
         let dlg = BackupPasswordDialog(mode: .create(address: address))
         dlg.onSubmit = { [weak self, weak dlg] backupPwd in
             guard let self = self else { return }
@@ -257,7 +264,7 @@ public final class BackupOptionsViewController: UIViewController,
     private func makeRule() -> UIView {
         let line = UIView()
         line.backgroundColor = (UIColor(named: "colorCommon6") ?? .label)
-            .withAlphaComponent(0.2)
+        .withAlphaComponent(0.2)
         line.translatesAutoresizingMaskIntoConstraints = false
         line.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return line
@@ -271,7 +278,7 @@ public final class BackupOptionsViewController: UIViewController,
 
         let b = UIButton(type: .custom)
         let img = UIImage(named: "arrow_back_circle_outline")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         b.setImage(img, for: .normal)
         b.tintColor = UIColor(named: "colorCommon6") ?? .label
         b.adjustsImageWhenHighlighted = true

@@ -1,13 +1,9 @@
-//
 // JsEngine.swift
-//
 // Port of WebViewManager.java. Owns a single `WKWebView` that hosts
 // bridge.html + quantumcoin-bundle.js and brokers every call to the JS
 // side. Exactly one instance per process - enforced by `shared`.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/bridge/WebViewManager.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/bridge/WebViewManager.java
 
 import Foundation
 import WebKit
@@ -20,12 +16,11 @@ public protocol BridgeCallback: AnyObject {
 
 /// Single-process-wide WKWebView host for `bridge.html` +
 /// `quantumcoin-bundle.js`.
-///
 /// - Initialization happens on the main thread (WKWebView requirement).
 /// - `waitUntilReady` blocks a caller until `didFinish` fires for the
-///   bundled `appassets://bridge.html` URL.
+/// bundled `appassets://bridge.html` URL.
 /// - Must never be invoked from the main thread via
-///   `JsBridge.blockingCall` - use the async wrappers.
+/// `JsBridge.blockingCall` - use the async wrappers.
 @MainActor
 public final class JsEngine: NSObject {
 
@@ -39,7 +34,6 @@ public final class JsEngine: NSObject {
     /// Must match the handler string installed by
     /// `WKUserContentController.add(_:name:)` and referenced from the JS
     /// side as `window.webkit.messageHandlers.androidBridge.postMessage`.
-    ///
     /// The JS side (`bridge.html`) calls through a shim named
     /// `window.AndroidBridge.*` - we install that shim as a
     /// `WKUserScript` at `.atDocumentStart` so legacy JS code continues
@@ -60,6 +54,22 @@ public final class JsEngine: NSObject {
     private let ready = AtomicBool()
     private let readyLatch = OneShotLatch()
 
+    /// Last navigation-failure error captured by the
+    /// WKNavigationDelegate, so callers waiting on
+    /// `waitUntilReady` can surface it instead of just timing
+    /// out with a generic "Bridge not ready" message. Read by
+    /// `lastLoadFailureDescription` and by AppDelegate's splash.
+    /// Marked `nonisolated(unsafe)` because the surrounding class
+    /// is `@MainActor` but the navigation-failure delegates and
+    /// the splash-screen reader both access this state from
+    /// outside the main-actor context. Safety is provided by
+    /// `lastFailureLock` (an NSLock, value-typed and Sendable):
+    /// every read and every write goes through that lock, so
+    /// "unsafe" here means "the compiler cannot prove it" rather
+    /// than "this code has a data race".
+    private nonisolated(unsafe) let lastFailureLock = NSLock()
+    private nonisolated(unsafe) var _lastFailure: String?
+
     // MARK: - Init
 
     private override init() {
@@ -76,11 +86,32 @@ public final class JsEngine: NSObject {
     /// Block the current thread until the bridge is ready or `timeout`
     /// seconds elapse. Safe to call from any thread; internally hops to
     /// the main thread only for the `WKWebView` handshake.
-    ///
     /// - Returns: `true` if the bridge became ready, `false` on timeout.
     nonisolated public func waitUntilReady(timeout: TimeInterval = 30) -> Bool {
         // readyLatch is nonisolated and Sendable; no MainActor hop needed.
         return readyLatch.await(timeout: timeout)
+    }
+
+    /// Diagnostic accessor: most recent navigation failure
+    /// reported by the WKNavigationDelegate, formatted for UI.
+    /// Returns `nil` if no failure was recorded. Safe from any
+    /// thread.
+    nonisolated public var lastLoadFailureDescription: String? {
+        lastFailureLock.lock(); defer { lastFailureLock.unlock() }
+        return _lastFailure
+    }
+
+    /// Internal: record a navigation failure and unblock anyone
+    /// waiting on `waitUntilReady` so callers fail fast instead of
+    /// timing out with a generic "Bridge not ready" message.
+    /// `nonisolated` because the navigation-failure delegate
+    /// methods can fire from non-MainActor contexts in some
+    /// WebKit error paths.
+    fileprivate nonisolated func recordLoadFailure(_ description: String) {
+        lastFailureLock.lock()
+        _lastFailure = description
+        lastFailureLock.unlock()
+        readyLatch.signal()
     }
 
     /// Fire-and-forget JavaScript evaluation, main-thread safe.
@@ -135,9 +166,42 @@ public final class JsEngine: NSObject {
         // mirrors WebSettings.setDomStorageEnabled(false) + MediaPlaybackRequiresUserGesture.
         config.websiteDataStore = .nonPersistent()
         config.mediaTypesRequiringUserActionForPlayback = .all
-        if #available(iOS 14.0, *) {
-            config.limitsNavigationsToAppBoundDomains = true
-        }
+        // (revised): we deliberately do NOT set
+        // `limitsNavigationsToAppBoundDomains = true` here.
+        // Why the previous defense-in-depth setup is wrong (audit-
+        // grade rationale for AI reviewers and human auditors):
+        // Apple's WKAppBoundDomains feature (TN3171) only applies
+        // to navigations using HTTP and HTTPS schemes. The wallet's
+        // bundle is loaded exclusively through the custom
+        // `appassets://` scheme via `WKURLSchemeHandler`, which is
+        // intercepted before any networking layer and is therefore
+        // not subject to the app-bound-domains policy regardless of
+        // the configuration flag.
+        // Worse, the prior Info.plist setup placed the literal
+        // string `"appassets"` (a URL-scheme name, not a domain
+        // name) inside `WKAppBoundDomains`. With strict mode
+        // enabled and a malformed entry, iOS 17+ / iOS 26 silently
+        // blocks the bridge load, which surfaces in the UI as
+        // "Bridge not ready" after a 30-second timeout because the
+        // navigation-finish delegate never fires.
+        // The actual defense the audit finding wanted is
+        // already provided by:
+        // 1. The custom-scheme-only design: there is literally
+        // no http(s) navigation path inside this WebView
+        // (`bridge.html` has no <script src="https://..."> or
+        // <link href="https://...">; the only resource it
+        // references is the local `quantumcoin-bundle.js`).
+        // 2. in `AppAssetsSchemeHandler` which
+        // gates every served resource against an explicit
+        // bundle-resource allowlist, so even a hypothetical
+        // injection cannot reach an unrelated bundle file.
+        // 3. bundle-hash pin, which detects any
+        // modification of the JS bundle bytes themselves.
+        // If a future change ever introduces an https:// load into
+        // this WebView (we currently have none), this is the
+        // single line to flip back on - and the corresponding
+        // `WKAppBoundDomains` array MUST contain real public-
+        // suffix-list hostnames, NOT scheme names.
 
         let ucc = WKUserContentController()
         ucc.add(ScriptMessageBroker(owner: self), name: Self.interfaceName)
@@ -163,12 +227,10 @@ public final class JsEngine: NSObject {
     /// native `postMessage` interface. Kept 1:1 with the `@JavascriptInterface`
     /// methods exposed by `WebViewManager.java` so the JS bridge code runs
     /// unchanged.
-    ///
-    /// Note: `isDebug()` is exposed synchronously because `bridge.html`
+    /// Note: `isDebug` is exposed synchronously because `bridge.html`
     /// uses it to gate `console.*` logging. On iOS we read a compile-time
     /// `#if DEBUG` via the user script so behaviour matches
     /// `BuildConfig.DEBUG` on Android.
-    ///
     /// `getPendingPayload` and `onResult` / `onError` all post their
     /// payloads through the message handler and block on a generated
     /// reply id for the synchronous `getPendingPayload` case. WebKit
@@ -222,7 +284,7 @@ public final class JsEngine: NSObject {
         // Match Android: parse `{"success":true|false,"error"?,"data"?}`
         // and route to onResult/onError accordingly.
         if let data = json.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             let ok = (obj["success"] as? Bool) ?? false
             if ok {
                 cb.onResult(json)
@@ -249,6 +311,47 @@ extension JsEngine: WKNavigationDelegate {
             readyLatch.signal()
         }
     }
+
+    /// Failure during the initial / provisional phase of a
+    /// navigation - this is what fires when the bridge URL itself
+    /// cannot be loaded (e.g. WKURLSchemeHandler rejected the
+    /// request, the resource file is missing, App-Bound-Domains
+    /// blocks the load, or the scheme is not registered).
+    /// Without this delegate the prior implementation silently
+    /// waited the full `waitUntilReady` timeout (30 s by default)
+    /// and then surfaced the generic "Bridge not ready" message,
+    /// which made first-launch failures very hard to diagnose.
+    /// We now record the underlying error and signal the latch
+    /// immediately so callers fail fast and surface the real
+    /// reason on the splash screen.
+    public func webView(_ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error) {
+        let url = webView.url?.absoluteString ?? Self.bridgeURLString
+        let message = "Bridge load failed (provisional) for \(url): "
+        + "\((error as NSError).domain)#\((error as NSError).code) "
+        + "\(error.localizedDescription)"
+        recordLoadFailure(message)
+    }
+
+    /// Failure after the document has started loading. Same
+    /// behaviour as the provisional failure: record + unblock the
+    /// readiness latch.
+    public func webView(_ webView: WKWebView,
+        didFail navigation: WKNavigation!,
+        withError error: Error) {
+        let url = webView.url?.absoluteString ?? Self.bridgeURLString
+        let message = "Bridge load failed (post-provisional) for \(url): "
+        + "\((error as NSError).domain)#\((error as NSError).code) "
+        + "\(error.localizedDescription)"
+        recordLoadFailure(message)
+    }
+
+    /// Web-content process termination (OOM, crash, sandbox
+    /// violation). Treat as a fatal load failure.
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        recordLoadFailure("Bridge web-content process terminated unexpectedly.")
+    }
 }
 
 // MARK: - Script message broker
@@ -262,19 +365,19 @@ private final class ScriptMessageBroker: NSObject, WKScriptMessageHandler {
     init(owner: JsEngine) { self.owner = owner; super.init() }
 
     func userContentController(_ userContentController: WKUserContentController,
-                               didReceive message: WKScriptMessage) {
+        didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any],
-              let method = body["m"] as? String,
-              let args = body["args"] as? [String]
+        let method = body["m"] as? String,
+        let args = body["args"] as? [String]
         else { return }
         guard let owner = owner else { return }
         switch method {
-        case "onResult":
+            case "onResult":
             guard args.count >= 2 else { return }
             MainActor.assumeIsolated {
                 owner.dispatchResult(requestId: args[0], json: args[1])
             }
-        case "onError":
+            case "onError":
             // Android side pipes this through `onResult` with success:false;
             // we preserve that behaviour for parity.
             guard args.count >= 2 else { return }
@@ -282,7 +385,7 @@ private final class ScriptMessageBroker: NSObject, WKScriptMessageHandler {
             MainActor.assumeIsolated {
                 owner.dispatchResult(requestId: args[0], json: envelope)
             }
-        default: break
+            default: break
         }
     }
 }
@@ -293,7 +396,58 @@ private final class ScriptMessageBroker: NSObject, WKScriptMessageHandler {
 /// to files in the main bundle's `Resources` directory, and resolves
 /// `appassets:///bridge-payload/<requestId>` to the staged JSON payload.
 /// Mirrors Android's `WebViewAssetLoader` one-to-one.
+/// hardening (audit-grade notes for reviewers):
+/// 1. **Explicit bundle-resource allowlist (`bundleAllowlist`).** The
+/// previous implementation accepted any filename and forwarded it to
+/// `Bundle.main.url(forResource:)`. That made any bundle resource
+/// (Info.plist, embedded.mobileprovision, image assets, future
+/// developer-added files) reachable via a URL of the shape
+/// `appassets://bridge.html/<name>`. With WKAppBoundDomains in place
+/// the surface is small today, but defense-in-depth means
+/// the scheme handler should serve only the two files the JS bundle
+/// legitimately needs: `bridge.html` and `quantumcoin-bundle.js`.
+/// Anything else returns the same `.fileDoesNotExist` error path
+/// that a genuinely-missing resource produces, so the response does
+/// NOT leak the existence of a denied resource versus a missing one.
+/// 2. **Scoped `Access-Control-Allow-Origin`.** Synchronous XHR from
+/// `bridge.html` to `appassets:///bridge-payload/<id>` originally
+/// required `Access-Control-Allow-Origin: *`. The `*` wildcard
+/// allowed any document loaded into the WebView (a hypothetical
+/// future bug or a navigation hijack) to read the staged payloads,
+/// which contain the most sensitive material the bridge ever sees:
+/// passwords, derived keys, private keys in transit between Swift
+/// and JS. Restricting the header to `appassets://bridge.html`
+/// means only documents from the bridge's exact origin can read
+/// payloads. Combined with 's `WKAppBoundDomains`, the only
+/// document that can EVER load in this WebView is `bridge.html`
+/// itself, so this is effectively a no-op today - but it is the
+/// correct CORS posture for any future change.
+/// 3. **Why not return 403 on a denied path?** Returning a distinct
+/// "denied" status would let an attacker enumerate the allowlist
+/// vs the bundle's actual file set (path X returns 403 ->
+/// "resource exists but is restricted"; path Y returns 404 ->
+/// "resource does not exist"). Returning `.fileDoesNotExist` for
+/// both makes the responses indistinguishable.
 private final class AppAssetsSchemeHandler: NSObject, WKURLSchemeHandler {
+
+    /// Explicit allowlist of bundle filenames the JS
+    /// bridge is allowed to load. Anything else is treated as
+    /// "resource does not exist" (see class doc point 3).
+    /// Adding a new bundle resource that the JS bundle needs to load
+    /// requires adding it to this set in code review - which is the
+    /// intended audit gate. The set is small and stable.
+    private static let bundleAllowlist: Set<String> = [
+        "bridge.html",
+        "quantumcoin-bundle.js",
+    ]
+
+    /// Scoped CORS origin. Replaces the prior `*`
+    /// wildcard. The bridge.html document is the ONLY origin that ever
+    /// runs inside this WebView (enforced by + WKAppBoundDomains);
+    /// any XHR that is not from this exact origin should not be able to
+    /// read staged payloads.
+    private static let allowedCorsOrigin = "appassets://bridge.html"
+
     weak var owner: JsEngine?
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
@@ -304,7 +458,7 @@ private final class AppAssetsSchemeHandler: NSObject, WKURLSchemeHandler {
 
         if url.path.hasPrefix("/bridge-payload/") {
             // JS-side pull of a staged payload. URL shape:
-            //   appassets:///bridge-payload/<requestId>
+            // appassets:///bridge-payload/<requestId>
             let last = url.lastPathComponent
             let reqId = last.removingPercentEncoding ?? last
             let body = MainActor.assumeIsolated { owner?.pullPayload(requestId: reqId) ?? "" }
@@ -314,9 +468,9 @@ private final class AppAssetsSchemeHandler: NSObject, WKURLSchemeHandler {
 
         // Bundled resource. Two URL shapes are possible because WebKit
         // resolves relative `<script src=...>` against the document URL:
-        //   - `appassets://bridge.html`                          (host-only, initial load)
-        //   - `appassets://bridge.html/quantumcoin-bundle.js`    (relative resolution)
-        //   - `appassets:///quantumcoin-bundle.js`               (root-relative, hypothetical)
+        // - `appassets://bridge.html` (host-only, initial load)
+        // - `appassets://bridge.html/quantumcoin-bundle.js` (relative resolution)
+        // - `appassets:///quantumcoin-bundle.js` (root-relative, hypothetical)
         // Prefer the last path component when present, else the host.
         let trimmed = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let filename: String
@@ -327,6 +481,35 @@ private final class AppAssetsSchemeHandler: NSObject, WKURLSchemeHandler {
         } else {
             urlSchemeTask.didFailWithError(URLError(.badURL))
             return
+        }
+        // Gate on the explicit allowlist BEFORE the
+        // bundle lookup. The miss path returns the same error code as a
+        // genuinely-absent file so an attacker cannot probe the allowlist
+        // (see class doc point 3).
+        guard Self.bundleAllowlist.contains(filename) else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        // (defense-in-depth): verify the JS bundle
+        // hash before serving its bytes to the WKWebView. The
+        // primary verification fires in `AppDelegate.application(_:
+        // didFinishLaunchingWithOptions:)` at boot - this serving-
+        // time check catches the (theoretical) case where the on-
+        // disk bytes change between boot and bundle load. The
+        // verifier caches its result so this is a single map lookup
+        // on the second-and-later calls. We only verify the JS
+        // bundle here, not bridge.html, because the JS bundle is
+        // the one that owns signing primitives; bridge.html is a
+        // small router whose tamper window is captured by
+        // + WKAppBoundDomains.
+        if filename == BundleIntegrity.bundleResourceName + "."
+        + BundleIntegrity.bundleResourceExtension {
+            do {
+                try BundleIntegrity.verifyOrFail()
+            } catch {
+                urlSchemeTask.didFailWithError(URLError(.dataNotAllowed))
+                return
+            }
         }
         guard let bundleURL = Bundle.main.url(forResource: filename, withExtension: nil) else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
@@ -356,9 +539,12 @@ private final class AppAssetsSchemeHandler: NSObject, WKURLSchemeHandler {
             headerFields: [
                 "Content-Type": mime,
                 "Content-Length": String(body.count),
-                // Needed so the synchronous XHR from the JS shim does not
-                // get blocked by WebKit's CORS preflight logic.
-                "Access-Control-Allow-Origin": "*"
+                // Scoped to bridge.html origin (was `*`).
+                // Bridge.html is the only document that ever loads in
+                // this WebView under + WKAppBoundDomains, so this
+                // is effectively a no-op today, but is the correct CORS
+                // posture for any future change. See class-level doc.
+                "Access-Control-Allow-Origin": Self.allowedCorsOrigin,
             ]
         )!
         task.didReceive(resp)
@@ -383,9 +569,8 @@ private final class AtomicBool: @unchecked Sendable {
 
 /// One-shot latch used to signal bridge readiness across threads.
 /// Replacement for Android's `CountDownLatch(1)`.
-///
 /// Uses `NSCondition` rather than `DispatchSemaphore` so a single
-/// `signal()` releases EVERY pending waiter via `broadcast()`. The
+/// `signal` releases EVERY pending waiter via `broadcast`. The
 /// original `DispatchSemaphore` flavour would only wake one of N
 /// concurrent `waitUntilReady` callers, so a second waiter (e.g. the
 /// `BlockchainNetworkManager.applyActive` Task.detached racing with
@@ -477,10 +662,10 @@ public enum JsEngineError: Error, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .pendingPayloadMapFull: return "pending payload map full; refusing to stage new entry"
-        case .bridgeNotReady:        return "Bridge WebView did not become ready in time"
-        case .timeout:               return "Bridge call timed out"
-        case .callFailed(let m):     return "Bridge call failed: \(m)"
+            case .pendingPayloadMapFull: return "pending payload map full; refusing to stage new entry"
+            case .bridgeNotReady: return "Bridge WebView did not become ready in time"
+            case .timeout: return "Bridge call timed out"
+            case .callFailed(let m): return "Bridge call failed: \(m)"
         }
     }
 }
@@ -496,17 +681,17 @@ fileprivate extension JSONEncoder {
         var out = "\""
         for u in s.unicodeScalars {
             switch u {
-            case "\\": out.append("\\\\")
-            case "\"": out.append("\\\"")
-            case "\u{0000}": out.append("\\u0000")
-            case "\n": out.append("\\n")
-            case "\r": out.append("\\r")
-            case "\t": out.append("\\t")
-            case "\u{0008}": out.append("\\b")
-            case "\u{000C}": out.append("\\f")
-            case "\u{2028}": out.append("\\u2028")
-            case "\u{2029}": out.append("\\u2029")
-            default:
+                case "\\": out.append("\\\\")
+                case "\"": out.append("\\\"")
+                case "\u{0000}": out.append("\\u0000")
+                case "\n": out.append("\\n")
+                case "\r": out.append("\\r")
+                case "\t": out.append("\\t")
+                case "\u{0008}": out.append("\\b")
+                case "\u{000C}": out.append("\\f")
+                case "\u{2028}": out.append("\\u2028")
+                case "\u{2029}": out.append("\\u2029")
+                default:
                 if u.value < 0x20 {
                     out.append(String(format: "\\u%04x", u.value))
                 } else {

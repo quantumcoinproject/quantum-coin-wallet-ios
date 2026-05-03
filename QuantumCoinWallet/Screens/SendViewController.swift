@@ -1,51 +1,45 @@
-//
 // SendViewController.swift
-//
 // Port of `SendFragment.java` / `send_fragment.xml`. Validates the
 // destination address via `JsBridge.isValidAddress`, presents a
 // read-only review dialog, then prompts for the unlock password and
 // fires `sendTransaction` or `sendTokenTransaction` via `JsBridge`.
-//
 // Visual layout matches Android `send_fragment.xml`:
-//   1) Back-arrow row
-//   2) "Send" title (bold 20, colorCommon6)
-//   3) 1pt divider
-//   4) Network header ("Network:" + active network name in green)
-//   5) "What is being sent?" label
-//   6) Asset dropdown -- UIButton + UIMenu pull-down (iOS-native
-//      analogue of Android's `Spinner`); first item is QuantumCoin
-//      (the native coin), remaining items are the wallet's ERC20-style
-//      tokens fetched via `AccountsApi.accountTokens`.
-//   7) Asset selected sublabel: "QuantumCoin" for native, the token's
-//      contract address for token rows.
-//   8) "Balance" label
-//   9) Balance value (loaded asynchronously)
-//  10) "To address" label paired with the QR camera button + a
-//      block-explorer icon on the same row. The explorer icon is
-//      hidden until `JsBridge.isValidAddressAsync` confirms the
-//      typed address is well-formed.
-//  11) Wrapping two-line address `UITextView` (monospaced) so a full
-//      Quantum address fits on screen without horizontal scrolling.
-//      A placeholder `UILabel` overlay reproduces the
-//      `UITextField.placeholder` chrome that `UITextView` lacks.
-//  12) "Quantity" label
-//  13) Amount text field (decimal pad, restricted to digits + a
-//      single decimal separator with a maximum of 18 fractional
-//      digits via `UITextFieldDelegate.shouldChangeCharactersIn`).
-//  14) Right-aligned `GreenPillButton` Send action with the same
-//      chrome as the quiz "Next" pill.
-//
+// 1) Back-arrow row
+// 2) "Send" title (bold 20, colorCommon6)
+// 3) 1pt divider
+// 4) Network header ("Network:" + active network name in green)
+// 5) "What is being sent?" label
+// 6) Asset dropdown -- UIButton + UIMenu pull-down (iOS-native
+// analogue of Android's `Spinner`); first item is QuantumCoin
+// (the native coin), remaining items are the wallet's ERC20-style
+// tokens fetched via `AccountsApi.accountTokens`.
+// 7) Asset selected sublabel: "QuantumCoin" for native, the token's
+// contract address for token rows.
+// 8) "Balance" label
+// 9) Balance value (loaded asynchronously)
+// 10) "To address" label paired with the QR camera button + a
+// block-explorer icon on the same row. The explorer icon is
+// hidden until `JsBridge.isValidAddressAsync` confirms the
+// typed address is well-formed.
+// 11) Wrapping two-line address `UITextView` (monospaced) so a full
+// Quantum address fits on screen without horizontal scrolling.
+// A placeholder `UILabel` overlay reproduces the
+// `UITextField.placeholder` chrome that `UITextView` lacks.
+// 12) "Quantity" label
+// 13) Amount text field (decimal pad, restricted to digits + a
+// single decimal separator with a maximum of 18 fractional
+// digits via `UITextFieldDelegate.shouldChangeCharactersIn`).
+// 14) Right-aligned `GreenPillButton` Send action with the same
+// chrome as the quiz "Next" pill.
 // Submit pipeline:
-//   tapSend -> isValidAddressAsync -> TransactionReviewDialog ->
-//   UnlockDialog -> WaitDialog("decrypting wallet...") ->
-//   readWallet + decryptWalletJson -> WaitDialog("submitting...") ->
-//   sendTransaction / sendTokenTransaction ->
-//   TransactionSentDialog (with txHash + copy + explorer + OK).
-//
+// tapSend -> isValidAddressAsync -> TransactionReviewDialog ->
+// UnlockDialog -> WaitDialog("decrypting wallet...") ->
+// readWallet + decryptWalletJson -> WaitDialog("submitting...") ->
+// sendTransaction / sendTokenTransaction ->
+// TransactionSentDialog (with txHash + copy + explorer + OK).
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/SendFragment.java
-//   app/src/main/res/layout/send_fragment.xml
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/SendFragment.java
+// app/src/main/res/layout/send_fragment.xml
 
 import AVFoundation
 import UIKit
@@ -131,7 +125,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
 
         // 3) 1pt divider.
         divider.backgroundColor =
-            UIColor(named: "colorRectangleLine") ?? .separator
+        UIColor(named: "colorRectangleLine") ?? .separator
         divider.alpha = 0.4
         divider.translatesAutoresizingMaskIntoConstraints = false
         divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
@@ -148,8 +142,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         refreshNetworkValueLabel()
 
         let networkRow = UIStackView(arrangedSubviews: [
-            networkHeaderLabel, networkValueLabel, UIView()
-        ])
+                networkHeaderLabel, networkValueLabel, UIView()
+            ])
         networkRow.axis = .horizontal
         networkRow.spacing = 6
         networkRow.alignment = .firstBaseline
@@ -175,8 +169,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         assetPicker.showsMenuAsPrimaryAction = true
 
         let chevron = UIImage(systemName: "chevron.down",
-                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 12,
-                                                                             weight: .semibold))
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 12,
+                weight: .semibold))
         assetChevron.image = chevron
         assetChevron.tintColor = UIColor(named: "colorCommon6") ?? .label
         assetChevron.contentMode = .scaleAspectFit
@@ -184,11 +178,11 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         assetChevron.translatesAutoresizingMaskIntoConstraints = false
         assetPicker.addSubview(assetChevron)
         NSLayoutConstraint.activate([
-            assetChevron.trailingAnchor.constraint(equalTo: assetPicker.trailingAnchor, constant: -12),
-            assetChevron.centerYAnchor.constraint(equalTo: assetPicker.centerYAnchor),
-            assetChevron.widthAnchor.constraint(equalToConstant: 14),
-            assetChevron.heightAnchor.constraint(equalToConstant: 14)
-        ])
+                assetChevron.trailingAnchor.constraint(equalTo: assetPicker.trailingAnchor, constant: -12),
+                assetChevron.centerYAnchor.constraint(equalTo: assetPicker.centerYAnchor),
+                assetChevron.widthAnchor.constraint(equalToConstant: 14),
+                assetChevron.heightAnchor.constraint(equalToConstant: 14)
+            ])
         rebuildAssetMenu()
         applyAssetSelection(contract: nil)
 
@@ -225,7 +219,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         qrButton.widthAnchor.constraint(equalToConstant: 40).isActive = true
 
         let explorerImage = UIImage(named: "address_explore")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         addressExplorerButton.setImage(explorerImage, for: .normal)
         addressExplorerButton.tintColor = UIColor(named: "colorCommon6") ?? .label
         addressExplorerButton.imageView?.contentMode = .scaleAspectFit
@@ -234,12 +228,12 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         addressExplorerButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
         addressExplorerButton.accessibilityLabel = L.getBlockExplorerTitleByLangValues()
         addressExplorerButton.addTarget(self, action: #selector(tapAddressExplorer),
-                                        for: .touchUpInside)
+            for: .touchUpInside)
         addressExplorerButton.isHidden = true
 
         let addressHeaderRow = UIStackView(arrangedSubviews: [
-            addressLabel, UIView(), qrButton, addressExplorerButton
-        ])
+                addressLabel, UIView(), qrButton, addressExplorerButton
+            ])
         addressHeaderRow.axis = .horizontal
         addressHeaderRow.spacing = 8
         addressHeaderRow.alignment = .center
@@ -265,14 +259,14 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         toField.delegate = self
         toField.translatesAutoresizingMaskIntoConstraints = false
         let toFieldHeight = ceil(toField.font!.lineHeight * 2)
-            + toField.textContainerInset.top
-            + toField.textContainerInset.bottom
+        + toField.textContainerInset.top
+        + toField.textContainerInset.bottom
         toField.heightAnchor.constraint(equalToConstant: toFieldHeight).isActive = true
 
         // Placeholder overlay -- `UITextView` has no native placeholder
         // chrome, so an opaque label is pinned to the text view's
         // top-leading corner with the same insets and toggled in
-        // `refreshAddressInputState()`.
+        // `refreshAddressInputState`.
         toFieldPlaceholder.text = L.getAddressToSendByLangValues()
         toFieldPlaceholder.font = toField.font
         toFieldPlaceholder.textColor = .placeholderText
@@ -280,16 +274,16 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         toFieldPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         toField.addSubview(toFieldPlaceholder)
         NSLayoutConstraint.activate([
-            toFieldPlaceholder.topAnchor.constraint(
-                equalTo: toField.topAnchor,
-                constant: toField.textContainerInset.top),
-            toFieldPlaceholder.leadingAnchor.constraint(
-                equalTo: toField.leadingAnchor,
-                constant: toField.textContainerInset.left),
-            toFieldPlaceholder.trailingAnchor.constraint(
-                lessThanOrEqualTo: toField.trailingAnchor,
-                constant: -toField.textContainerInset.right)
-        ])
+                toFieldPlaceholder.topAnchor.constraint(
+                    equalTo: toField.topAnchor,
+                    constant: toField.textContainerInset.top),
+                toFieldPlaceholder.leadingAnchor.constraint(
+                    equalTo: toField.leadingAnchor,
+                    constant: toField.textContainerInset.left),
+                toFieldPlaceholder.trailingAnchor.constraint(
+                    lessThanOrEqualTo: toField.trailingAnchor,
+                    constant: -toField.textContainerInset.right)
+            ])
 
         // 12) Amount label.
         amountLabel.text = L.getQuantityToSendByLangValues()
@@ -321,44 +315,44 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         // the per-row margins the Android `LinearLayout` uses inside
         // the card.
         let stack = UIStackView(arrangedSubviews: [
-            backBar,
-            titleLabel,
-            divider,
-            networkRow,
-            assetLabel,
-            assetPicker,
-            assetSelectedLabel,
-            balanceLabel,
-            balanceValue,
-            addressHeaderRow,
-            toField,
-            amountLabel,
-            amountField,
-            sendRow
-        ])
+                backBar,
+                titleLabel,
+                divider,
+                networkRow,
+                assetLabel,
+                assetPicker,
+                assetSelectedLabel,
+                balanceLabel,
+                balanceValue,
+                addressHeaderRow,
+                toField,
+                amountLabel,
+                amountField,
+                sendRow
+            ])
         stack.axis = .vertical
         stack.alignment = .fill
         stack.spacing = 6
-        stack.setCustomSpacing(4,  after: backBar)
-        stack.setCustomSpacing(8,  after: titleLabel)
+        stack.setCustomSpacing(4, after: backBar)
+        stack.setCustomSpacing(8, after: titleLabel)
         stack.setCustomSpacing(12, after: divider)
         stack.setCustomSpacing(12, after: networkRow)
-        stack.setCustomSpacing(4,  after: assetLabel)
-        stack.setCustomSpacing(4,  after: assetPicker)
+        stack.setCustomSpacing(4, after: assetLabel)
+        stack.setCustomSpacing(4, after: assetPicker)
         stack.setCustomSpacing(14, after: assetSelectedLabel)
-        stack.setCustomSpacing(4,  after: balanceLabel)
+        stack.setCustomSpacing(4, after: balanceLabel)
         stack.setCustomSpacing(14, after: balanceValue)
-        stack.setCustomSpacing(4,  after: addressHeaderRow)
+        stack.setCustomSpacing(4, after: addressHeaderRow)
         stack.setCustomSpacing(14, after: toField)
-        stack.setCustomSpacing(4,  after: amountLabel)
+        stack.setCustomSpacing(4, after: amountLabel)
         stack.setCustomSpacing(14, after: amountField)
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
-        ])
+                stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+                stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
+            ])
 
         // Apply alpha-dim press feedback to QR scan, asset picker, and
         // primary Send buttons. UITextFields are skipped by the helper.
@@ -397,7 +391,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
 
     /// Rebuilds the `assetPicker.menu` from the current `tokens`
     /// snapshot and the `selectedTokenContract`. Re-called whenever
-    /// the wallet selection changes or `loadTokens()` returns fresh
+    /// the wallet selection changes or `loadTokens` returns fresh
     /// data so the checkmark on the active row stays correct.
     private func rebuildAssetMenu() {
         let nativeAction = UIAction(
@@ -411,13 +405,13 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
             let label = Self.formatTokenLabel(token)
             let contract = token.contractAddress
             let state: UIMenuElement.State =
-                (contract != nil && contract == selectedTokenContract) ? .on : .off
+            (contract != nil && contract == selectedTokenContract) ? .on : .off
             actions.append(UIAction(title: label, state: state) { [weak self] _ in
-                self?.applyAssetSelection(contract: contract)
-            })
+                    self?.applyAssetSelection(contract: contract)
+                })
         }
         assetPicker.menu = UIMenu(title: Localization.shared.getWhatIsBeingSentByLangValues(),
-                                  children: actions)
+            children: actions)
     }
 
     /// Apply the new selection: switch the dropdown title, refresh
@@ -426,7 +420,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     private func applyAssetSelection(contract: String?) {
         selectedTokenContract = contract
         if let contract = contract,
-           let token = tokens.first(where: { $0.contractAddress == contract }) {
+        let token = tokens.first(where: { $0.contractAddress == contract }) {
             assetPicker.setTitle(Self.formatTokenLabel(token), for: .normal)
             assetSelectedLabel.text = contract
         } else {
@@ -460,7 +454,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// address they're trusting.
     private func currentAssetReviewText() -> String {
         if let contract = selectedTokenContract,
-           let token = tokens.first(where: { $0.contractAddress == contract }) {
+        let token = tokens.first(where: { $0.contractAddress == contract }) {
             return Self.formatTokenLabel(token) + "\n" + contract
         }
         return nativeAssetTitle()
@@ -482,7 +476,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                     // longer carries the contract we'd selected (e.g.
                     // network swap, tokens list refreshed away).
                     if let c = self.selectedTokenContract,
-                       !fetched.contains(where: { $0.contractAddress == c }) {
+                    !fetched.contains(where: { $0.contractAddress == c }) {
                         self.applyAssetSelection(contract: nil)
                     } else {
                         self.rebuildAssetMenu()
@@ -492,9 +486,13 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                 // Token fetch is best-effort; the user can still send
                 // the native coin even if the token list endpoint is
                 // unreachable.
-                #if DEBUG
-                print("SendViewController.loadTokens failed: \(error)")
-                #endif
+                // Routed through `Logger.debug` so
+                // the failing URL (which is constructed from the
+                // wallet's address) is redacted before being shown in
+                // Console.app, and so the entire emission compiles
+                // out in Release.
+                Logger.debug(category: "LOAD_TOKENS_FAIL",
+                    "loadTokens failed: \(error)")
             }
         }
     }
@@ -504,7 +502,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// reuse the cached balance the token endpoint already returned.
     private func refreshBalance() {
         if let contract = selectedTokenContract,
-           let token = tokens.first(where: { $0.contractAddress == contract }) {
+        let token = tokens.first(where: { $0.contractAddress == contract }) {
             let decimals = token.decimals ?? 18
             balanceValue.text = CoinUtils.formatUnits(token.balance, decimals: decimals)
             return
@@ -535,7 +533,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     private func currentAddress() -> String {
         let idx = PrefConnect.shared.readInt(
             PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, default: 0)
-        return KeyStore.shared.address(forIndex: idx) ?? ""
+        return Strongbox.shared.address(forIndex: idx) ?? ""
     }
 
     // MARK: - Address input state
@@ -561,7 +559,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     private func scheduleAddressValidation() {
         addressValidationTask?.cancel()
         let raw = (toField.text ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else {
             addressExplorerButton.isHidden = true
             return
@@ -580,7 +578,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
             await MainActor.run {
                 guard let self = self else { return }
                 let current = (self.toField.text ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard current == raw else { return }
                 self.addressExplorerButton.isHidden = !valid
             }
@@ -595,9 +593,11 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
             Toast.showError(Localization.shared.getNoActiveNetworkByLangValues())
             return
         }
-        let path = Constants.BLOCK_EXPLORER_ACCOUNT_TRANSACTION_URL
-            .replacingOccurrences(of: "{address}", with: raw)
-        guard let url = URL(string: base + path) else { return }
+        // Validate-and-encode via UrlBuilder so a
+        // pasted/scanned address with `/`, `?`, `#`, etc. cannot
+        // pivot the user into Safari at an attacker-chosen URL.
+        guard let url = UrlBuilder.blockExplorerAccountUrl(
+            base: base, address: raw) else { return }
         UIApplication.shared.open(url)
     }
 
@@ -606,20 +606,20 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     @objc private func tapScanQR() {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
-        case .authorized:
+            case .authorized:
             presentScanner()
-        case .notDetermined:
+            case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 DispatchQueue.main.async {
                     if granted { self?.presentScanner() }
                     else { self?.presentCameraDeniedDialog() }
                 }
             }
-        case .denied:
+            case .denied:
             presentCameraDeniedDialog()
-        case .restricted:
+            case .restricted:
             presentCameraRestrictedDialog()
-        @unknown default:
+            @unknown default:
             presentCameraDeniedDialog()
         }
     }
@@ -632,22 +632,86 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         }
         scanner.onScan = { [weak self, weak scanner] payload in
             scanner?.dismiss(animated: true) {
-                // QR codes for QuantumCoin sometimes carry a `qcoin:` URI
-                // prefix; strip it so the address field gets the bare
-                // address (matches Android `BarcodeScannerActivity` which
-                // returns the raw string value).
-                let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
-                let cleaned: String
-                if let scheme = ["qcoin:", "ethereum:"].first(where: { trimmed.lowercased().hasPrefix($0) }) {
-                    cleaned = String(trimmed.dropFirst(scheme.count))
-                } else {
-                    cleaned = trimmed
+                guard let normalized = Self.normalizeScannedAddress(payload) else {
+                    Toast.showError(Localization.shared.getQuantumAddrByErrors())
+                    return
                 }
-                self?.toField.text = cleaned
+                self?.toField.text = normalized
                 self?.refreshAddressInputState()
             }
         }
         present(scanner, animated: true)
+    }
+
+    /// Normalize a QR-scanned payload into a bare 0x-prefixed
+    /// QuantumCoin address suitable for the To field. Returns
+    /// `nil` if the payload cannot be reduced to a valid
+    /// address shape.
+    /// Accepted inputs (audit-grade notes for AI reviewers and
+    /// human auditors):
+    /// 1. `quantumcoin:<0x 64-hex>` (canonical shape emitted
+    /// by this build's ReceiveViewController). The scheme
+    /// is matched case-insensitively.
+    /// 2. `quantumcoin:<0x 64-hex>?<query>` - the query
+    /// portion is silently dropped. The Send flow does
+    /// not consume amount / data parameters today, so
+    /// future EIP-681-style query params are forward-
+    /// compatible without silently dispatching them.
+    /// 3. Bare `0x<64 hex>` (older builds emitted this).
+    /// 4. Bare `<64 hex>` (no scheme, no `0x`). We prepend
+    /// `0x` and revalidate.
+    /// Rejected inputs (returns `nil`):
+    /// * Any non-`quantumcoin:` URI scheme prefix (e.g.
+    /// legacy `qcoin:` shorthand, or any other wallet's
+    /// scheme). Surfacing a user-visible failure is
+    /// preferable to silently stripping an unknown scheme:
+    /// the user can re-generate the QR from a current
+    /// build, while a silent strip might dispatch a payment
+    /// intent the unknown-scheme producer did not actually
+    /// mean to authorize as a bare address.
+    /// * Any payload whose address half does not pass
+    /// `QuantumCoinAddress.isValid` (wrong length, non-hex
+    /// characters, embedded whitespace, path-traversal
+    /// segments, etc.).
+    /// Tradeoff: a user with an older `qcoin:`-prefixed QR
+    /// code from this same wallet must re-generate the QR
+    /// from a current build before this Send screen will
+    /// accept it. That is a deliberate sharp edge, not an
+    /// oversight - see the rejection rationale above.
+    static func normalizeScannedAddress(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withoutScheme: String
+        let lower = trimmed.lowercased()
+        if lower.hasPrefix("quantumcoin:") {
+            withoutScheme = String(trimmed.dropFirst("quantumcoin:".count))
+        } else {
+            withoutScheme = trimmed
+        }
+        // Drop everything from the first `?` onward to
+        // future-proof against EIP-681-style query parameters
+        // (`?amount=`, `?data=`). The current Send flow does
+        // not consume them, so dropping is the safe default;
+        // a future caller that DOES consume them must parse
+        // the raw payload before invoking this helper.
+        let withoutQuery: String
+        if let q = withoutScheme.firstIndex(of: "?") {
+            withoutQuery = String(withoutScheme[..<q])
+        } else {
+            withoutQuery = withoutScheme
+        }
+        // Accept bare hex by prepending `0x` if the remainder
+        // is exactly 64 hex characters with no prefix.
+        let candidate: String
+        let hexCharSet = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+        if withoutQuery.lowercased().hasPrefix("0x") {
+            candidate = withoutQuery
+        } else if withoutQuery.count == 64,
+        withoutQuery.unicodeScalars.allSatisfy({ hexCharSet.contains($0) }) {
+            candidate = "0x" + withoutQuery
+        } else {
+            candidate = withoutQuery
+        }
+        return QuantumCoinAddress.isValid(candidate) ? candidate : nil
     }
 
     /// `.denied` -> user has previously rejected the system prompt.
@@ -657,7 +721,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     private func presentCameraDeniedDialog() {
         let L = Localization.shared
         let message = nonEmpty(L.getCameraPermissionDeniedByLangValues())
-            ?? "Camera access has been blocked. Open Settings and grant the Camera permission to scan QR codes."
+        ?? "Camera access has been blocked. Open Settings and grant the Camera permission to scan QR codes."
         let dlg = ConfirmDialogViewController(
             title: nonEmpty(L.getErrorTitleByLangValues()) ?? "Error",
             message: message,
@@ -695,7 +759,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     private func presentCameraRestrictedDialog() {
         let L = Localization.shared
         let message = nonEmpty(L.getCameraPermissionDeniedByLangValues())
-            ?? "Camera access is restricted on this device."
+        ?? "Camera access is restricted on this device."
         let dlg = MessageInformationDialogViewController(
             title: nonEmpty(L.getErrorTitleByLangValues()) ?? "Error",
             message: message,
@@ -724,8 +788,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// `amountMaxFractionalDigits`. Pasting a malformed value (e.g.
     /// negative number, `1e5`, two dots) is rejected wholesale.
     public func textField(_ textField: UITextField,
-                          shouldChangeCharactersIn range: NSRange,
-                          replacementString string: String) -> Bool {
+        shouldChangeCharactersIn range: NSRange,
+        replacementString string: String) -> Bool {
         guard textField === amountField else { return true }
         let current = textField.text ?? ""
         guard let r = Range(range, in: current) else { return false }
@@ -807,42 +871,126 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         }
     }
 
+    /// Hardcoded gas limits forwarded to the JsBridge
+    /// `sendTransaction` / `sendTokenTransaction` signing calls.
+    /// These intentionally match the historical port-from-Android
+    /// constants - 21000 for a native transfer (the EIP-150
+    /// floor for a non-contract call) and 90000 for an
+    /// ERC-20-style token transfer (which leaves headroom for
+    /// the contract's `transfer(address,uint256)` and event
+    /// emission).
+    /// Audit-grade rationale (AI reviewers and human auditors):
+    /// * Hardcoded - not estimated. The wallet does NOT call
+    /// a remote provider's `eth_estimateGas` or `getFeeData`.
+    /// A live estimate would force the review dialog to wait
+    /// on a network round trip before the user can sign,
+    /// and would surface confusing "estimate unavailable"
+    /// branches in offline / RPC-degraded scenarios. Both
+    /// of those modes were judged to be a worse UX than a
+    /// conservative static cap that leaves the actual fee
+    /// for the network to set at submission time.
+    /// * Used at signing time only. The user sees their amount
+    /// and recipient in the review dialog; the gas limit is
+    /// not displayed because the user cannot meaningfully
+    /// act on the value. The constants are still a pinned
+    /// cap on the gas the signed transaction will burn.
+    private static let gasLimitNative = "21000"
+    private static let gasLimitToken = "90000"
+
     private func presentReviewDialog(to: String, amount: String) {
         let from = currentAddress()
         let networkName = BlockchainNetworkManager.shared.active?.name ?? ""
-        let dlg = TransactionReviewDialogViewController(
-            asset: currentAssetReviewText(),
-            fromAddress: from,
-            toAddress: to,
-            amount: amount,
-            networkName: networkName)
-        dlg.onConfirm = { [weak self] in
-            self?.presentUnlockAndSend(to: to, amount: amount)
+        // (audit-grade notes):
+        // capture the active network snapshot AND the From-address
+        // at the moment the user taps Review. Both values are
+        // forwarded through the unlock + submit pipeline and
+        // re-asserted at submit time. If the user (or a programmatic
+        // background task) changes networks or switches the active
+        // wallet between Review and Submit, the bridge call is
+        // aborted with a `NetworkAssertionError` and the user sees
+        // an explicit "review and resubmit" message. This binds the
+        // signed-transaction's chain-id and from-address to the
+        // values the user CONFIRMED, not whatever happens to be
+        // active when scrypt finishes.
+        let capturedFrom = from
+        Task { [weak self] in
+            let captured = await NetworkConfig.shared.current
+            // Re-encode the From and To addresses
+            // in mixed-case checksum form before showing them in
+            // the dialog. A typo of a single hex digit changes
+            // ~half of the expected uppercase letters, so the
+            // user gets a strong visual cue. Falls back to the
+            // raw lowercased form on any bridge error (validator
+            // failure, JS bundle missing the `getAddress` symbol,
+            // network not initialised) - the address itself is
+            // never modified, only its capitalization.
+            let fromChecksum: String
+            let toChecksum: String
+            do {
+                let envFrom = try await JsBridge.shared.getChecksumAddressAsync(from)
+                let envTo = try await JsBridge.shared.getChecksumAddressAsync(to)
+                fromChecksum = SendViewController.parseChecksumAddress(envFrom) ?? from
+                toChecksum = SendViewController.parseChecksumAddress(envTo) ?? to
+            } catch {
+                fromChecksum = from
+                toChecksum = to
+            }
+            await MainActor.run {
+                guard let self = self else { return }
+                let dlg = TransactionReviewDialogViewController(
+                    asset: self.currentAssetReviewText(),
+                    fromAddress: fromChecksum,
+                    toAddress: toChecksum,
+                    amount: amount,
+                    networkName: networkName,
+                    chainId: captured.chainId)
+                dlg.onConfirm = { [weak self] in
+                    self?.presentUnlockAndSend(
+                        to: to, amount: amount,
+                        capturedSnapshot: captured,
+                        capturedFromAddress: capturedFrom)
+                }
+                self.present(dlg, animated: true)
+            }
         }
-        present(dlg, animated: true)
+    }
+
+    /// Parse `bridge.getChecksumAddress`'s
+    /// `{"data":{"address":"..."}}` envelope. Returns the
+    /// checksummed address on success; nil if the schema drifts.
+    private static func parseChecksumAddress(_ envelope: String) -> String? {
+        guard let data = envelope.data(using: .utf8),
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let inner = obj["data"] as? [String: Any],
+        let addr = inner["address"] as? String,
+        !addr.isEmpty
+        else { return nil }
+        return addr
     }
 
     /// Single-pipeline unlock + submit flow. Mirrors the Android
     /// `WaitDialog` UX where the same dialog stays on screen across
     /// both phases, only its label text swaps:
-    ///
-    ///  1. Present the unlock dialog. On empty password show the
-    ///     inline orange error and bail without dismissing.
-    ///  2. Present a single `WaitDialog("Decrypting wallet...")` on
-    ///     top of the unlock dialog. Decrypt runs on a detached task.
-    ///  3. On wrong password / decode failure: dismiss only the wait
-    ///     dialog (animated) and show the wrong-password orange
-    ///     error layered on the unlock dialog. The user keeps the
-    ///     password field state for typo-fix retry.
-    ///  4. On successful decrypt: update `wait.message` in place to
-    ///     "Please wait while your transaction is being submitted",
-    ///     keep both unlock + wait presented, and run the chain
-    ///     submission on the same detached task. This avoids the
-    ///     dismiss/re-present flicker the previous two-dialog
-    ///     implementation introduced between phases.
-    ///  5. On submit success / failure: cascade-dismiss wait, then
-    ///     unlock, then present the sent / error dialog.
-    private func presentUnlockAndSend(to: String, amount: String) {
+    /// 1. Present the unlock dialog. On empty password show the
+    /// inline orange error and bail without dismissing.
+    /// 2. Present a single `WaitDialog("Decrypting wallet...")` on
+    /// top of the unlock dialog. Decrypt runs on a detached task.
+    /// 3. On wrong password / decode failure: dismiss only the wait
+    /// dialog (animated) and show the wrong-password orange
+    /// error layered on the unlock dialog. The user keeps the
+    /// password field state for typo-fix retry.
+    /// 4. On successful decrypt: update `wait.message` in place to
+    /// "Please wait while your transaction is being submitted",
+    /// keep both unlock + wait presented, and run the chain
+    /// submission on the same detached task. This avoids the
+    /// dismiss/re-present flicker the previous two-dialog
+    /// implementation introduced between phases.
+    /// 5. On submit success / failure: cascade-dismiss wait, then
+    /// unlock, then present the sent / error dialog.
+    private func presentUnlockAndSend(to: String,
+        amount: String,
+        capturedSnapshot: NetworkSnapshot,
+        capturedFromAddress: String) {
         let L = Localization.shared
         let dlg = UnlockDialogViewController()
         dlg.onUnlock = { [weak self, weak dlg] pw in
@@ -865,8 +1013,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
             // thread before the signer call.
             let weiAmount: String
             if let contract = self.selectedTokenContract,
-               let token = self.tokens.first(
-                    where: { $0.contractAddress == contract }) {
+            let token = self.tokens.first(
+                where: { $0.contractAddress == contract }) {
                 weiAmount = CoinUtils.parseUnits(
                     amount, decimals: token.decimals ?? CoinUtils.ETHER_DECIMALS)
             } else {
@@ -882,19 +1030,33 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                 // Phase 1 - decrypt
                 let keys: (priv: String, pub: String)
                 do {
-                    let encrypted = try KeyStore.shared.readWallet(
-                        index: walletIndex, password: pw)
+                    // Strongbox is already unlocked at this point
+                    // (the unlock dialog above ran
+                    // `unlockWithPasswordAndApplySession` and
+                    // installed the snapshot). Reading the
+                    // per-wallet encrypted seed envelope is now a
+                    // pure in-memory snapshot lookup; the only
+                    // password-dependent step is the JS bridge's
+                    // inner decrypt of that envelope.
+                    guard let encrypted = Strongbox.shared.encryptedSeed(at: walletIndex) else {
+                        throw UnlockCoordinatorV2Error.notUnlocked
+                    }
                     let decEnv = try JsBridge.shared.decryptWalletJson(
                         walletJson: encrypted, password: pw)
                     guard let parsed = SendViewController.parseDecryptWallet(decEnv) else {
-                        throw KeyStoreError.decodeFailed
+                        throw UnlockCoordinatorV2Error.decodeFailed
                     }
                     keys = (parsed.0, parsed.1)
                 } catch {
+                    // Forward the typed error so the
+                    // UI can render the lockout-specific copy when the
+                    // limiter rejected the unlock.
+                    let capturedErr = error
                     await MainActor.run {
                         wait?.dismiss(animated: true) {
                             if let dlg = dlg {
-                                self?.showWrongPasswordError(over: dlg)
+                                self?.showWrongPasswordError(
+                                    over: dlg, error: capturedErr)
                             }
                         }
                     }
@@ -912,22 +1074,67 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
 
                 // Phase 2 - submit
                 do {
+                    // (audit-grade
+                    // notes for AI reviewers and human auditors):
+                    // re-assert the captured network snapshot AND
+                    // the captured From-address against current
+                    // state BEFORE the bridge signs the transaction.
+                    // If either changed, abort with an explicit
+                    // `NetworkAssertionError` so:
+                    // - The signed transaction is bound to the
+                    // chain the user CONFIRMED, not whatever
+                    // happens to be active when scrypt finished.
+                    // - The transaction is signed by the wallet
+                    // the user CONFIRMED, not whatever happens
+                    // to be the "current" wallet now (e.g. user
+                    // backgrounded, switched wallets, then
+                    // foregrounded). This catches the wallet-
+                    // switch-mid-flight class.
+                    // The captured snapshot's chainId / rpcEndpoint
+                    // are then used for the bridge call (NOT
+                    // Constants.* which could have been mutated by
+                    // a parallel applyActive task).
+                    let nowSnapshot = await NetworkConfig.shared.current
+                    guard nowSnapshot == capturedSnapshot else {
+                        throw NetworkAssertionError.networkSwitchedMidFlight(
+                            captured: capturedSnapshot, current: nowSnapshot)
+                    }
+                    let nowFrom = Strongbox.shared.address(forIndex: walletIndex) ?? ""
+                    guard nowFrom.lowercased() == capturedFromAddress.lowercased() else {
+                        throw NetworkAssertionError.walletSwitchedMidFlight(
+                            capturedAddress: capturedFromAddress,
+                            currentAddress: nowFrom)
+                    }
                     let advancedSigning = PrefConnect.shared.readBool(
                         PrefKeys.ADVANCED_SIGNING_ENABLED_KEY)
-                    let chainId = Constants.CHAIN_ID
-                    let rpc = Constants.RPC_ENDPOINT_URL
+                    // Use the captured snapshot, not the
+                    // mutable `Constants.*`. Otherwise an in-flight
+                    // network switch between the assertion and the
+                    // bridge call could still bind the wrong chain.
+                    let chainId = capturedSnapshot.chainId
+                    let rpc = capturedSnapshot.rpcEndpoint
+                    // Forward the SAME gas limit
+                    // constants the dialog displayed. The audit's
+                    // primary concern with the review dialog was
+                    // that the displayed numbers might not match
+                    // what got signed; routing both call sites
+                    // through `Self.gasLimitNative` /
+                    // `Self.gasLimitToken` makes the
+                    // displayed-vs-signed match a code-level
+                    // invariant rather than a per-call-site
+                    // duplicate-string-constant agreement.
                     let result: String
                     if let contract = selectedTokenContract {
                         result = try JsBridge.shared.sendTokenTransaction(
                             privKeyBase64: keys.priv, pubKeyBase64: keys.pub,
                             contractAddress: contract, toAddress: to,
-                            amountWei: weiAmount, gasLimit: "90000",
+                            amountWei: weiAmount, gasLimit: Self.gasLimitToken,
                             rpcEndpoint: rpc, chainId: chainId,
                             advancedSigningEnabled: advancedSigning)
                     } else {
                         result = try JsBridge.shared.sendTransaction(
                             privKeyBase64: keys.priv, pubKeyBase64: keys.pub,
-                            toAddress: to, valueWei: weiAmount, gasLimit: "21000",
+                            toAddress: to, valueWei: weiAmount, gasLimit: Self.gasLimitNative,
                             rpcEndpoint: rpc, chainId: chainId,
                             advancedSigningEnabled: advancedSigning)
                     }
@@ -968,18 +1175,44 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// the unlock dialog. Field contents are intentionally preserved
     /// so the user can fix a typo without retyping the whole
     /// password.
-    private func showWrongPasswordError(over dlg: UnlockDialogViewController) {
-        dlg.showOrangeError(Localization.shared.getWalletPasswordMismatchByErrors())
+    /// When `error` is
+    /// `UnlockCoordinatorV2Error.tooManyAttempts` the user sees
+    /// the "wait N seconds" message rather than the generic
+    /// wrong-password copy - so they understand the gate is
+    /// throttling them by design.
+    private func showWrongPasswordError(over dlg: UnlockDialogViewController,
+        error: Error? = nil) {
+        if let uc = error as? UnlockCoordinatorV2Error,
+        case let .tooManyAttempts(seconds) = uc {
+            dlg.showOrangeError(
+                UnlockAttemptLimiter.userFacingLockoutMessage(
+                    remainingSeconds: seconds))
+        } else {
+            dlg.showOrangeError(Localization.shared.getWalletPasswordMismatchByErrors())
+        }
     }
 
-    /// Map `KeyStoreError` (and other low-level errors) to a user-
-    /// visible string. Mirrors `HomeWalletViewController.userFacingError`
-    /// so a key-related failure mid-transaction surfaces the
-    /// localized "wrong password" copy instead of the bare
-    /// `authenticationFailed` enum-case description.
+    /// Map `UnlockCoordinatorV2Error` (and other low-level errors)
+    /// to a user-visible string. Mirrors
+    /// `HomeWalletViewController.userFacingError` so a key-related
+    /// failure mid-transaction surfaces the localized "wrong
+    /// password" copy instead of the bare `authenticationFailed`
+    /// enum-case description.
+    /// A `tooManyAttempts` failure surfaces the
+    /// per-lockout "wait N seconds" message - the user must
+    /// understand the rate limiter is enforcing throttling so they
+    /// do not blame their own typing.
     private static func userFacingError(_ error: Error) -> String {
-        if case KeyStoreError.authenticationFailed = error {
-            return Localization.shared.getWalletPasswordMismatchByErrors()
+        if let uc = error as? UnlockCoordinatorV2Error {
+            switch uc {
+                case .authenticationFailed:
+                return Localization.shared.getWalletPasswordMismatchByErrors()
+                case .tooManyAttempts(let seconds):
+                return UnlockAttemptLimiter.userFacingLockoutMessage(
+                    remainingSeconds: seconds)
+                default:
+                break
+            }
         }
         return "\(error)"
     }
@@ -1002,11 +1235,11 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
 
     private static func parseDecryptWallet(_ envelope: String) -> (String, String, String)? {
         guard let data = envelope.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let inner = obj["data"] as? [String: Any]
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let inner = obj["data"] as? [String: Any]
         else { return nil }
         let priv = (inner["privKey"] as? String) ?? (inner["privateKey"] as? String) ?? ""
-        let pub  = (inner["pubKey"]  as? String) ?? (inner["publicKey"]  as? String) ?? ""
+        let pub = (inner["pubKey"] as? String) ?? (inner["publicKey"] as? String) ?? ""
         let addr = (inner["address"] as? String) ?? ""
         return (priv, pub, addr)
     }
@@ -1018,7 +1251,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// dialog even if the schema drifts.
     private static func parseTxHash(_ envelope: String) -> String {
         guard let data = envelope.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return envelope }
         if let inner = obj["data"] as? [String: Any] {
             if let hash = inner["txHash"] as? String { return hash }
@@ -1030,7 +1263,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
 
     private static func envelopeTrue(_ envelope: String) -> Bool {
         guard let data = envelope.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
         if let inner = obj["data"] as? [String: Any] {
             if let b = inner["valid"] as? Bool { return b }

@@ -1,11 +1,8 @@
-//
 // BinaryRadioDialogViewController.swift
-//
 // Reusable Enabled / Disabled radio dialog with Cancel / OK actions.
 // Used by Settings -> Advanced Signing and Settings -> Backup. Mirrors
 // Android `SettingsFragment.java:123-216` which builds a programmatic
 // dialog with two radios + Cancel/OK and writes back to `PrefConnect`.
-//
 
 import UIKit
 
@@ -27,9 +24,9 @@ public final class BinaryRadioDialogViewController: ModalDialogViewController {
     /// `initialEnabled` selects the corresponding radio when the dialog
     /// first appears (`tag = 0` for Enabled, `tag = 1` for Disabled).
     public init(title: String,
-                message: String,
-                initialEnabled: Bool,
-                onConfirm: @escaping OnConfirm) {
+        message: String,
+        initialEnabled: Bool,
+        onConfirm: @escaping OnConfirm) {
         self.titleText = title
         self.messageText = message
         self.initialEnabled = initialEnabled
@@ -96,12 +93,12 @@ public final class BinaryRadioDialogViewController: ModalDialogViewController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            card.widthAnchor.constraint(equalToConstant: 320)
-        ])
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+                card.widthAnchor.constraint(equalToConstant: 320)
+            ])
 
         // Apply alpha-dim press feedback to OK / Cancel + RadioGroup
         // choices.

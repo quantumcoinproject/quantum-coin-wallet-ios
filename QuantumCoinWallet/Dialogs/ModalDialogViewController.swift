@@ -1,11 +1,8 @@
-//
 // ModalDialogViewController.swift
-//
 // Base class for every rounded-card modal dialog. Android uses
 // `DialogFragment` + `custom_alert_dialog.xml`-style; on iOS we compose
 // this as a `UIViewController` presented with
 // `.overFullScreen + .crossDissolve`.
-//
 
 import UIKit
 
@@ -61,17 +58,17 @@ open class ModalDialogViewController: UIViewController {
         view.addSubview(dim)
         view.addSubview(card)
         NSLayoutConstraint.activate([
-            dim.topAnchor.constraint(equalTo: view.topAnchor),
-            dim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            dim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            dim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                dim.topAnchor.constraint(equalTo: view.topAnchor),
+                dim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                dim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                dim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            card.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            card.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            card.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
-            card.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
-            card.widthAnchor.constraint(lessThanOrEqualToConstant: 420)
-        ])
+                card.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                card.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                card.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
+                card.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
+                card.widthAnchor.constraint(lessThanOrEqualToConstant: 420)
+            ])
     }
 
     /// Android `GlobalMethods.focusAndShowKeyboard` equivalent.

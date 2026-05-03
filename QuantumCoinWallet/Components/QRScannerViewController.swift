@@ -1,16 +1,12 @@
-//
 // QRScannerViewController.swift
-//
 // Lightweight `AVCaptureSession`-backed QR scanner used by the Send
 // screen for "scan a recipient address" parity with Android's
 // `BarcodeScannerActivity` (which uses ML Kit / ZXing). For our use
 // case AVFoundation's built-in `.qr` metadata scanner is sufficient
 // — recipient addresses are short ASCII strings and we don't need
 // ML Kit's multi-format detection.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/activities/BarcodeScannerActivity.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/activities/BarcodeScannerActivity.java
 
 import AVFoundation
 import UIKit
@@ -52,11 +48,11 @@ public final class QRScannerViewController: UIViewController {
         cancelButton.addTarget(self, action: #selector(tapCancel), for: .touchUpInside)
         view.addSubview(cancelButton)
         NSLayoutConstraint.activate([
-            cancelButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-                                                 constant: -24),
-            cancelButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            cancelButton.heightAnchor.constraint(equalToConstant: 36)
-        ])
+                cancelButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                    constant: -24),
+                cancelButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                cancelButton.heightAnchor.constraint(equalToConstant: 36)
+            ])
 
         configureSession()
     }
@@ -83,8 +79,8 @@ public final class QRScannerViewController: UIViewController {
 
     private func configureSession() {
         guard let device = AVCaptureDevice.default(for: .video),
-              let input = try? AVCaptureDeviceInput(device: device),
-              session.canAddInput(input) else {
+        let input = try? AVCaptureDeviceInput(device: device),
+        session.canAddInput(input) else {
             failAndDismiss()
             return
         }
@@ -125,11 +121,11 @@ public final class QRScannerViewController: UIViewController {
 extension QRScannerViewController: AVCaptureMetadataOutputObjectsDelegate {
 
     public func metadataOutput(_ output: AVCaptureMetadataOutput,
-                               didOutput metadataObjects: [AVMetadataObject],
-                               from connection: AVCaptureConnection) {
+        didOutput metadataObjects: [AVMetadataObject],
+        from connection: AVCaptureConnection) {
         guard !didReport,
-              let obj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-              let value = obj.stringValue else { return }
+        let obj = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+        let value = obj.stringValue else { return }
         didReport = true
         if session.isRunning { session.stopRunning() }
         onScan?(value)

@@ -1,17 +1,13 @@
-//
 // RevealWalletViewController.swift
-//
 // Port of `RevealWalletFragment.java` and
 // `reveal_wallet_fragment.xml`. Shows the decrypted seed-word grid for
 // the current wallet, plus a back control and a left-aligned Copy
 // button. Address, private key, and public key are intentionally NOT
 // surfaced on this screen - matching the Android layout, which exposes
 // only the seed words for backup recovery purposes.
-//
 // Android references:
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/RevealWalletFragment.java
-//   app/src/main/res/layout/reveal_wallet_fragment.xml
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/RevealWalletFragment.java
+// app/src/main/res/layout/reveal_wallet_fragment.xml
 
 import UIKit
 
@@ -54,16 +50,16 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
         scroll.addSubview(stack)
 
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 16),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -16),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
-            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32)
-        ])
+                scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+                scroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+                scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 16),
+                stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -16),
+                stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
+                stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
+                stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32)
+            ])
 
         stack.addArrangedSubview(makeBackBar())
         stack.addArrangedSubview(makeTitle(Localization.shared.getSeedWordsByLangValues()))
@@ -81,8 +77,8 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
 
     private static func parseSeeds(_ envelope: String) -> [String] {
         guard let data = envelope.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let inner = obj["data"] as? [String: Any]
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let inner = obj["data"] as? [String: Any]
         else { return [] }
         return (inner["seedWords"] as? [String]) ?? []
     }
@@ -101,7 +97,7 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
 
         let b = UIButton(type: .custom)
         let img = UIImage(named: "arrow_back_circle_outline")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         b.setImage(img, for: .normal)
         b.tintColor = UIColor(named: "colorCommon6") ?? .label
         b.adjustsImageWhenHighlighted = true
@@ -130,7 +126,7 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
     private func makeRule() -> UIView {
         let line = UIView()
         line.backgroundColor = (UIColor(named: "colorCommon6") ?? .label)
-            .withAlphaComponent(0.2)
+        .withAlphaComponent(0.2)
         line.translatesAutoresizingMaskIntoConstraints = false
         line.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return line
@@ -150,7 +146,7 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
 
         let icon = UIButton(type: .custom)
         let img = UIImage(named: "copy_outline")?
-            .withRenderingMode(.alwaysTemplate)
+        .withRenderingMode(.alwaysTemplate)
         icon.setImage(img, for: .normal)
         icon.tintColor = UIColor(named: "colorCommon6") ?? .label
         icon.adjustsImageWhenHighlighted = true
@@ -204,7 +200,11 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
             let column = (idx % 4) + 1
             return "\(letter)\(column) = \(word)"
         }
-        UIPasteboard.general.string = lines.joined(separator: "\n")
+        // Spelled-out seed grid copy. Same
+        // sensitivity class as the raw seed phrase - 30 s window opts
+        // out of Universal Clipboard and minimises residual exposure
+        // on this device. See Pasteboard.swift.
+        Pasteboard.copySensitive(lines.joined(separator: "\n"), lifetime: 30)
         copiedLabel?.isHidden = false
         let lbl = copiedLabel
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {

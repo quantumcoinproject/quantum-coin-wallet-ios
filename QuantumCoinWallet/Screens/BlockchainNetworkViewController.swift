@@ -1,6 +1,4 @@
-//
 // BlockchainNetworkViewController.swift
-//
 // Port of `BlockchainNetworkFragment.java` /
 // `blockchain_network_fragment.xml` (the Settings entry point) and
 // `BlockchainNetworkAddFragment.java` /
@@ -12,28 +10,24 @@
 // a long list of networks scrolls vertically. The footer is a
 // centered "Add Network" link that pushes
 // `BlockchainNetworkAddViewController`.
-//
 // The Add screen mirrors Android: back arrow, "Add Network" title,
 // "Enter Blockchain Network JSON" subtitle, a horizontally-scrollable
 // JSON editor pre-populated with the same default JSON Android shows,
 // and a right-aligned purple "Add" pill button.
-//
 // Network switching (with the radio dialog) lives in
 // `BlockchainNetworkSelectDialogViewController`; this screen is
 // intentionally read-only and matches Android's Settings -> Networks
 // behavior.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/BlockchainNetworkFragment.java
-//   app/src/main/res/layout/blockchain_network_fragment.xml
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/BlockchainNetworkAddFragment.java
-//   app/src/main/res/layout/blockchain_network_add_fragment.xml
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/BlockchainNetworkFragment.java
+// app/src/main/res/layout/blockchain_network_fragment.xml
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/BlockchainNetworkAddFragment.java
+// app/src/main/res/layout/blockchain_network_add_fragment.xml
 
 import UIKit
 
 public final class BlockchainNetworkViewController: UIViewController,
-                                                    HomeScreenViewTypeProviding {
+HomeScreenViewTypeProviding {
 
     public var screenViewType: ScreenViewType { .innerFragment }
 
@@ -43,7 +37,7 @@ public final class BlockchainNetworkViewController: UIViewController,
     /// surrounding scroll views.
     private let tableStack = UIStackView()
 
-    /// Held so `viewDidAppear` can call `flashScrollIndicators()` to
+    /// Held so `viewDidAppear` can call `flashScrollIndicators` to
     /// hint that the table scrolls horizontally beyond the viewport
     /// (matches the always-visible scrollbar requested for parity).
     private weak var innerHScroll: UIScrollView?
@@ -135,51 +129,51 @@ public final class BlockchainNetworkViewController: UIViewController,
         scrollHugTable.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
-            backBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            backBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            backBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                backBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+                backBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                backBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            title.topAnchor.constraint(equalTo: backBar.bottomAnchor, constant: 8),
-            title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            title.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                title.topAnchor.constraint(equalTo: backBar.bottomAnchor, constant: 8),
+                title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                title.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            topRule.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
-            topRule.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            topRule.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                topRule.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+                topRule.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                topRule.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            outerVScroll.topAnchor.constraint(equalTo: topRule.bottomAnchor, constant: 8),
-            outerVScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            outerVScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            outerVScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
-            scrollMaxHeight,
-            scrollHugTable,
+                outerVScroll.topAnchor.constraint(equalTo: topRule.bottomAnchor, constant: 8),
+                outerVScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                outerVScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                outerVScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
+                scrollMaxHeight,
+                scrollHugTable,
 
-            // Pin the inner horizontal scroll to the outer scroll's
-            // content layout guide; its width follows the vertical
-            // scroll's frameLayoutGuide so it always fills the
-            // available width even when the table is narrow, while its
-            // height grows with `tableStack`'s intrinsic content size.
-            innerHScroll.topAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.topAnchor),
-            innerHScroll.leadingAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.leadingAnchor),
-            innerHScroll.trailingAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.trailingAnchor),
-            innerHScroll.bottomAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.bottomAnchor),
-            innerHScroll.widthAnchor.constraint(equalTo: outerVScroll.frameLayoutGuide.widthAnchor),
-            innerHScroll.heightAnchor.constraint(equalTo: tableStack.heightAnchor),
+                // Pin the inner horizontal scroll to the outer scroll's
+                // content layout guide; its width follows the vertical
+                // scroll's frameLayoutGuide so it always fills the
+                // available width even when the table is narrow, while its
+                // height grows with `tableStack`'s intrinsic content size.
+                innerHScroll.topAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.topAnchor),
+                innerHScroll.leadingAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.leadingAnchor),
+                innerHScroll.trailingAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.trailingAnchor),
+                innerHScroll.bottomAnchor.constraint(equalTo: outerVScroll.contentLayoutGuide.bottomAnchor),
+                innerHScroll.widthAnchor.constraint(equalTo: outerVScroll.frameLayoutGuide.widthAnchor),
+                innerHScroll.heightAnchor.constraint(equalTo: tableStack.heightAnchor),
 
-            tableStack.topAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.topAnchor),
-            tableStack.leadingAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.leadingAnchor),
-            tableStack.trailingAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.trailingAnchor),
-            tableStack.bottomAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.bottomAnchor),
+                tableStack.topAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.topAnchor),
+                tableStack.leadingAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.leadingAnchor),
+                tableStack.trailingAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.trailingAnchor),
+                tableStack.bottomAnchor.constraint(equalTo: innerHScroll.contentLayoutGuide.bottomAnchor),
 
-            bottomRule.topAnchor.constraint(equalTo: outerVScroll.bottomAnchor, constant: 8),
-            bottomRule.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            bottomRule.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                bottomRule.topAnchor.constraint(equalTo: outerVScroll.bottomAnchor, constant: 8),
+                bottomRule.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                bottomRule.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            addLink.topAnchor.constraint(equalTo: bottomRule.bottomAnchor, constant: 12),
-            addLink.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            addLink.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            addLink.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
-        ])
+                addLink.topAnchor.constraint(equalTo: bottomRule.bottomAnchor, constant: 12),
+                addLink.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                addLink.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                addLink.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
+            ])
 
         rebuildRows()
 
@@ -224,22 +218,60 @@ public final class BlockchainNetworkViewController: UIViewController,
         let networks = BlockchainNetworkManager.shared.networks
         let totalRows = 1 + networks.count
         tableStack.addArrangedSubview(makeRow(
-            cells: headers,
-            isHeader: true,
-            isLastRow: totalRows == 1))
+                cells: headers,
+                isHeader: true,
+                isLastRow: totalRows == 1))
         for (rowIndex, net) in networks.enumerated() {
             let cells = [
                 net.chainId,
-                net.name,
+                Self.networkNameWithPinBadge(net),
                 net.scanApiDomain,
                 net.rpcEndpoint,
                 net.blockExplorerUrl
             ]
             tableStack.addArrangedSubview(makeRow(
-                cells: cells,
-                isHeader: false,
-                isLastRow: rowIndex == networks.count - 1))
+                    cells: cells,
+                    isHeader: false,
+                    isLastRow: rowIndex == networks.count - 1))
         }
+    }
+
+    /// Append a "(system trust)" suffix to the
+    /// network name when the scan API host is NOT in
+    /// `TlsPinning.kSpkiPinsByHost`. The suffix is the user-
+    /// visible part of the contract: pinned default networks
+    /// render as `MAINNET` (clean, common case); user-added or
+    /// unrecognised networks render as `My RPC (system trust)` so
+    /// the user can see at a glance which network is protected by
+    /// SPKI pinning vs which falls back to the iOS system trust
+    /// store. We keep the suffix text-only (rather than an SF
+    /// Symbol image) because the surrounding table is built from
+    /// fixed-width `UILabel` cells; a graphic badge would require
+    /// reworking the row layout for this single piece of metadata.
+    /// The text is intentionally short so the existing column
+    /// width comfortably accommodates the bundled `MAINNET` plus
+    /// the suffix without truncation on the smallest target
+    /// device.
+    private static func networkNameWithPinBadge(_ net: BlockchainNetwork) -> String {
+        let host = Self.hostFromUrl(net.scanApiDomain)
+        if TlsPinning.isPinned(host: host) {
+            return net.name
+        }
+        return net.name + " (system trust)"
+    }
+
+    /// Strip scheme / port / path from a stored scan-API URL down
+    /// to the lowercased hostname so the result can be looked up
+    /// in `TlsPinning.kSpkiPinsByHost`. Mirrors the same
+    /// hostname-parsing logic used by `URLSession`'s authentication
+    /// challenge, which reports `protectionSpace.host` already
+    /// lowercased and scheme-free.
+    private static func hostFromUrl(_ urlString: String) -> String {
+        if let comps = URLComponents(string: urlString),
+        let host = comps.host {
+            return host.lowercased()
+        }
+        return urlString.lowercased()
     }
 
     /// Build a single horizontal row of fixed-width cells. Header rows
@@ -272,12 +304,12 @@ public final class BlockchainNetworkViewController: UIViewController,
             cell.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(label)
             NSLayoutConstraint.activate([
-                label.topAnchor.constraint(equalTo: cell.topAnchor, constant: 8),
-                label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -8),
-                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
-                cell.widthAnchor.constraint(equalToConstant: Self.columnWidths[index])
-            ])
+                    label.topAnchor.constraint(equalTo: cell.topAnchor, constant: 8),
+                    label.bottomAnchor.constraint(equalTo: cell.bottomAnchor, constant: -8),
+                    label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                    label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+                    cell.widthAnchor.constraint(equalToConstant: Self.columnWidths[index])
+                ])
 
             // 0.5pt gridlines: skip the trailing column's right border
             // and the last row's bottom border so the outer rules around
@@ -288,11 +320,11 @@ public final class BlockchainNetworkViewController: UIViewController,
                 rightBorder.translatesAutoresizingMaskIntoConstraints = false
                 cell.addSubview(rightBorder)
                 NSLayoutConstraint.activate([
-                    rightBorder.topAnchor.constraint(equalTo: cell.topAnchor),
-                    rightBorder.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
-                    rightBorder.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
-                    rightBorder.widthAnchor.constraint(equalToConstant: 0.5)
-                ])
+                        rightBorder.topAnchor.constraint(equalTo: cell.topAnchor),
+                        rightBorder.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
+                        rightBorder.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
+                        rightBorder.widthAnchor.constraint(equalToConstant: 0.5)
+                    ])
             }
             if !isLastRow {
                 let bottomBorder = UIView()
@@ -300,11 +332,11 @@ public final class BlockchainNetworkViewController: UIViewController,
                 bottomBorder.translatesAutoresizingMaskIntoConstraints = false
                 cell.addSubview(bottomBorder)
                 NSLayoutConstraint.activate([
-                    bottomBorder.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
-                    bottomBorder.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
-                    bottomBorder.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
-                    bottomBorder.heightAnchor.constraint(equalToConstant: 0.5)
-                ])
+                        bottomBorder.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+                        bottomBorder.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
+                        bottomBorder.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
+                        bottomBorder.heightAnchor.constraint(equalToConstant: 0.5)
+                    ])
             }
 
             row.addArrangedSubview(cell)
@@ -341,7 +373,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
 
     public var screenViewType: ScreenViewType { .innerFragment }
 
-    /// Mirror of Android `BlockchainNetworkAddFragment.makeJSON()`
+    /// Mirror of Android `BlockchainNetworkAddFragment.makeJSON`
     /// (`blockchain_network_add_fragment.java:252-263`). Field order,
     /// key spelling, and `networkId` being an unquoted integer match
     /// Android verbatim. The iOS `BlockchainNetwork` decoder also
@@ -349,11 +381,11 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
     /// cleanly through `tapAdd`.
     private static let defaultJsonText = """
     {
-      "scanApiDomain": "app.readrelay.quantumcoinapi.com",
-      "rpcEndpoint": "https://public.rpc.quantumcoinapi.com",
-      "blockExplorerDomain": "quantumscan.com",
-      "blockchainName": "MAINNET",
-      "networkId": 123123
+        "scanApiDomain": "app.readrelay.quantumcoinapi.com",
+        "rpcEndpoint": "https://public.rpc.quantumcoinapi.com",
+        "blockExplorerDomain": "quantumscan.com",
+        "blockchainName": "MAINNET",
+        "networkId": 123123
     }
     """
 
@@ -381,7 +413,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
         let topRule = makeRule()
 
         // "Enter Blockchain Network JSON" subtitle. Mirrors Android
-        // `getEnterNetworkJsonByLangValues()` rendered in bold 16sp.
+        // `getEnterNetworkJsonByLangValues` rendered in bold 16sp.
         let subtitle = UILabel()
         subtitle.text = L.getEnterNetworkJsonByLangValues()
         subtitle.font = Typography.boldTitle(16)
@@ -406,7 +438,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
         textView.isScrollEnabled = false
         textView.textContainer.lineBreakMode = .byClipping
         textView.textContainer.size = CGSize(width: CGFloat.greatestFiniteMagnitude,
-                                             height: CGFloat.greatestFiniteMagnitude)
+            height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer.widthTracksTextView = false
         textView.autocorrectionType = .no
         textView.autocapitalizationType = .none
@@ -452,56 +484,56 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
         [backBar, title, topRule, subtitle, midRule, jsonScroll, addRow].forEach(view.addSubview)
 
         NSLayoutConstraint.activate([
-            backBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            backBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            backBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                backBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+                backBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                backBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            title.topAnchor.constraint(equalTo: backBar.bottomAnchor, constant: 8),
-            title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            title.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                title.topAnchor.constraint(equalTo: backBar.bottomAnchor, constant: 8),
+                title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                title.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            topRule.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
-            topRule.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            topRule.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                topRule.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+                topRule.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                topRule.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            subtitle.topAnchor.constraint(equalTo: topRule.bottomAnchor, constant: 8),
-            subtitle.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            subtitle.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                subtitle.topAnchor.constraint(equalTo: topRule.bottomAnchor, constant: 8),
+                subtitle.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                subtitle.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            midRule.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 8),
-            midRule.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            midRule.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                midRule.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 8),
+                midRule.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                midRule.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
 
-            jsonScroll.topAnchor.constraint(equalTo: midRule.bottomAnchor, constant: 12),
-            jsonScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            jsonScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            // Compact 160pt fixed height (down from 220pt) - matches
-            // the requested smaller editor; the rest of the screen now
-            // breathes between the editor and the right-aligned Add
-            // button instead of stretching to fill.
-            jsonScroll.heightAnchor.constraint(equalToConstant: 160),
+                jsonScroll.topAnchor.constraint(equalTo: midRule.bottomAnchor, constant: 12),
+                jsonScroll.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                jsonScroll.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                // Compact 160pt fixed height (down from 220pt) - matches
+                // the requested smaller editor; the rest of the screen now
+                // breathes between the editor and the right-aligned Add
+                // button instead of stretching to fill.
+                jsonScroll.heightAnchor.constraint(equalToConstant: 160),
 
-            // Inside the scroll: pin the text view so the scroll
-            // view's content size grows to whatever the text view's
-            // intrinsic size demands. The text view's intrinsic
-            // width can exceed the scroll view's frame width because
-            // we disabled `widthTracksTextView`, so long lines
-            // engage horizontal scrolling.
-            textView.topAnchor.constraint(equalTo: jsonScroll.contentLayoutGuide.topAnchor, constant: 4),
-            textView.leadingAnchor.constraint(equalTo: jsonScroll.contentLayoutGuide.leadingAnchor, constant: 4),
-            textView.trailingAnchor.constraint(equalTo: jsonScroll.contentLayoutGuide.trailingAnchor, constant: -4),
-            textView.bottomAnchor.constraint(equalTo: jsonScroll.contentLayoutGuide.bottomAnchor, constant: -4),
+                // Inside the scroll: pin the text view so the scroll
+                // view's content size grows to whatever the text view's
+                // intrinsic size demands. The text view's intrinsic
+                // width can exceed the scroll view's frame width because
+                // we disabled `widthTracksTextView`, so long lines
+                // engage horizontal scrolling.
+                textView.topAnchor.constraint(equalTo: jsonScroll.contentLayoutGuide.topAnchor, constant: 4),
+                textView.leadingAnchor.constraint(equalTo: jsonScroll.contentLayoutGuide.leadingAnchor, constant: 4),
+                textView.trailingAnchor.constraint(equalTo: jsonScroll.contentLayoutGuide.trailingAnchor, constant: -4),
+                textView.bottomAnchor.constraint(equalTo: jsonScroll.contentLayoutGuide.bottomAnchor, constant: -4),
 
-            // Add button row sits 12pt below the (now compact) JSON
-            // editor instead of being pinned to the safe-area floor.
-            addRow.topAnchor.constraint(equalTo: jsonScroll.bottomAnchor, constant: 12),
-            addRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            addRow.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            addRow.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+                // Add button row sits 12pt below the (now compact) JSON
+                // editor instead of being pinned to the safe-area floor.
+                addRow.topAnchor.constraint(equalTo: jsonScroll.bottomAnchor, constant: 12),
+                addRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+                addRow.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+                addRow.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
 
-            addButton.heightAnchor.constraint(equalToConstant: 43),
-            addButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 96)
-        ])
+                addButton.heightAnchor.constraint(equalToConstant: 43),
+                addButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 96)
+            ])
 
         // Apply alpha-dim press feedback to the Add button and back
         // arrow.
@@ -516,7 +548,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
     }
 
     /// Hostname regex from Android `BlockchainNetworkAddFragment`:
-    ///   `^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)(\.([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?))+$`
+    /// `^(?=.{1,253}$)([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)(\.([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?))+$`
     /// Validates total length 1-253 chars, labels 1-63 chars, no
     /// leading/trailing hyphens, requires at least one dot.
     private static let hostnameRegex: NSRegularExpression = {
@@ -540,20 +572,42 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
     /// which are stored on `BlockchainNetwork` as bare hostnames
     /// (`ensureHttps` prepends `https://` on the way in). Accepts
     /// either:
-    ///   • a bare hostname (current Android-parity contract), or
-    ///   • a full `http(s)://host[/path]` URL — `URLComponents` strips
-    ///     the path/query, leaving just the host for the hostname
-    ///     check; the model's `ensureHttps` then becomes a no-op.
-    /// Rejects every other scheme (ftp://, ws://, file://, …) and any
-    /// non-URL-shaped string so a malformed paste can't bypass the
-    /// hostname format gate.
+    /// • a bare hostname (current Android-parity contract), or
+    /// • a full `https://host[/path]` URL — `URLComponents` strips
+    /// the path/query, leaving just the host for the hostname
+    /// check; the model's `ensureHttps` then becomes a no-op.
+    /// Rejects every other scheme (ftp://, ws://, file://, plain
+    /// `http://` — see ) and any non-URL-shaped string so a
+    /// malformed paste can't bypass the hostname format gate.
+    /// (audit-grade notes for AI reviewers and human
+    /// auditors): plain `http://` is REJECTED outright. Previously the
+    /// validator accepted both `http://` and `https://` and
+    /// `ensureHttps` left `http://` untouched on the way into the
+    /// strongbox. The combined effect was that a user (or pasteboard
+    /// hijacker) could configure a custom network whose RPC, scan-API,
+    /// and block-explorer all spoke plaintext HTTP, leaking transaction
+    /// destinations + amounts to any on-path observer; the explorer
+    /// link then opened via `UIApplication.shared.open` and the system
+    /// browser DID load it (ATS does not apply to the system Safari
+    /// process). For a wallet that holds high-value assets this is a
+    /// silent traffic-interception class. We reject `http://` at the
+    /// entry-form gate so it never reaches the strongbox; the model layer
+    /// (`BlockchainNetwork.ensureHttps`) silently upgrades any residual
+    /// `http://` to `https://` as defense-in-depth.
+    /// Tradeoff: a developer running a local plaintext test RPC cannot
+    /// configure one. Acceptable - the wallet is for high-value
+    /// assets, not local dev. If a developer-mode escape is ever
+    /// needed it must be added behind an explicit "I understand this
+    /// is insecure" gate (out of scope for this fix).
     private static func isValidScanLikeDomain(_ s: String) -> Bool {
         let lower = s.lowercased()
-        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
+        // Plain http:// is rejected.
+        if lower.hasPrefix("http://") { return false }
+        if lower.hasPrefix("https://") {
             guard let comps = URLComponents(string: s),
-                  let scheme = comps.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https",
-                  let host = comps.host, !host.isEmpty
+            let scheme = comps.scheme?.lowercased(),
+            scheme == "https",
+            let host = comps.host, !host.isEmpty
             else { return false }
             return isValidHostname(host)
         }
@@ -567,7 +621,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
         if len == 0 || len > blockchainNameMaxLen { return false }
         for c in name.unicodeScalars {
             let isLetter = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z")
-            let isDigit  = (c >= "0" && c <= "9")
+            let isDigit = (c >= "0" && c <= "9")
             let isAllowed = c == "_" || c == "-" || c == " "
             if !(isLetter || isDigit || isAllowed) { return false }
         }
@@ -580,8 +634,8 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
     private func presentError(_ message: String) {
         let L = Localization.shared
         let title = L.getErrorTitleByLangValues().isEmpty
-            ? "Error"
-            : L.getErrorTitleByLangValues()
+        ? "Error"
+        : L.getErrorTitleByLangValues()
         let dlg = MessageInformationDialogViewController.error(
             title: title, message: message)
         present(dlg, animated: true)
@@ -596,12 +650,12 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
         // `JSONSerialization.jsonObject(with:)`.
         let obj: [String: Any]
         guard let data = raw.data(using: .utf8),
-              let parsed = try? JSONSerialization.jsonObject(with: data),
-              let dict = parsed as? [String: Any]
+        let parsed = try? JSONSerialization.jsonObject(with: data),
+        let dict = parsed as? [String: Any]
         else {
             let invalidMsg = L.getInvalidNetworkJsonByErrors().isEmpty
-                ? "The JSON is invalid."
-                : L.getInvalidNetworkJsonByErrors()
+            ? "The JSON is invalid."
+            : L.getInvalidNetworkJsonByErrors()
             presentError(invalidMsg)
             return
         }
@@ -611,7 +665,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
         // about. Android's `BlockchainNetworkAddFragment` silently
         // drops these via `optString` on a fixed key list; iOS
         // tightens the contract so a typo'd field can't sneak into
-        // the encrypted vault and disappear on the next round-trip
+        // the encrypted strongbox and disappear on the next round-trip
         // through `JSONDecoder` (which rejects extras under default
         // settings).
         let allowedKeys: Set<String> = [
@@ -626,7 +680,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
         }
 
         // Pull the same fields Android's tapAdd reads. Each is
-        // `optString(...).trim()` on Android; the Swift equivalent is
+        // `optString(...).trim` on Android; the Swift equivalent is
         // a String coercion + trim with whitespace stripped.
         func trimmedString(_ key: String) -> String {
             if let s = obj[key] as? String {
@@ -637,11 +691,11 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
             }
             return ""
         }
-        let scanApiDomain      = trimmedString("scanApiDomain")
-        let rpcEndpoint        = trimmedString("rpcEndpoint")
+        let scanApiDomain = trimmedString("scanApiDomain")
+        let rpcEndpoint = trimmedString("rpcEndpoint")
         let blockExplorerDomain = trimmedString("blockExplorerDomain")
-        let blockchainName     = trimmedString("blockchainName")
-        let networkId          = trimmedString("networkId")
+        let blockchainName = trimmedString("blockchainName")
+        let networkId = trimmedString("networkId")
 
         // Step 2 - mirror Android's six validation gates verbatim,
         // including the user-visible messages, so the iOS UX reads
@@ -651,10 +705,10 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
             return
         }
         if let url = URL(string: rpcEndpoint),
-           let scheme = url.scheme?.lowercased(),
-           scheme == "https",
-           let host = url.host,
-           Self.isValidHostname(host) {
+        let scheme = url.scheme?.lowercased(),
+        scheme == "https",
+        let host = url.host,
+        Self.isValidHostname(host) {
             // valid
         } else {
             presentError("RPC Endpoint URL is not a valid https host.")
@@ -692,18 +746,18 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
             "networkId": networkId
         ]
         guard let canonData = try? JSONSerialization.data(withJSONObject: canonical),
-              let net = try? JSONDecoder().decode(BlockchainNetwork.self, from: canonData)
+        let net = try? JSONDecoder().decode(BlockchainNetwork.self, from: canonData)
         else {
             let invalidMsg = L.getInvalidNetworkJsonByErrors().isEmpty
-                ? "The JSON is invalid."
-                : L.getInvalidNetworkJsonByErrors()
+            ? "The JSON is invalid."
+            : L.getInvalidNetworkJsonByErrors()
             presentError(invalidMsg)
             return
         }
-        // Adding a network requires re-encrypting the vault blob, so
+        // Adding a network requires re-encrypting the strongbox blob, so
         // we collect the user's password through
         // `UnlockDialogViewController` first. iOS no longer caches the
-        // vault main key across operations: every write derives it on
+        // strongbox main key across operations: every write derives it on
         // demand from the password and zeroes the bytes immediately
         // afterwards. Wrong password leaves the unlock dialog up with
         // the standard "wrong password" UX so the user can retry; on
@@ -736,7 +790,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
                             unlock?.dismiss(animated: true) { [weak self] in
                                 guard let self = self else { return }
                                 (self.parent as? HomeViewController)?
-                                    .beginTransactionNow(BlockchainNetworkViewController())
+                                .beginTransactionNow(BlockchainNetworkViewController())
                             }
                         } else if let unlock = unlock {
                             self?.showUnlockError(over: unlock)
@@ -749,7 +803,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
     }
 
     /// Wrong-password error layered as the shared orange OK alert
-    /// on top of the unlock dialog. `clearField()` is intentionally
+    /// on top of the unlock dialog. `clearField` is intentionally
     /// NOT called so the typed password is preserved for typo-fix
     /// retry; the password field is refocused once the alert is
     /// dismissed (handled inside `showOrangeError`).

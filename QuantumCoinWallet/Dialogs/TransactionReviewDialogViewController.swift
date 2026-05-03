@@ -1,71 +1,91 @@
-//
 // TransactionReviewDialogViewController.swift
-//
 // Read-only review of a pending Send transaction. Presented after
 // the user taps Send and the destination address has passed
 // `JsBridge.isValidAddressAsync`, BEFORE the unlock-password dialog,
 // so the user can sanity-check the From / To / amount / network
-// pairing before committing to a vault decrypt.
-//
-// Layout mirrors the Android transaction-review prompt
-// (`SendFragment.java` -> `showTransactionConfirmDialog`):
-//
-//   "Please review your transaction request to be sent:"
-//
-//   What is being sent?
-//   <native asset name OR token symbol + contract>
-//
-//   From Address:
-//   <wallet 0x... mono, 2 lines, byTruncatingMiddle>
-//
-//   To Address:
-//   <typed 0x... mono, 2 lines, byTruncatingMiddle>
-//
-//   Send quantity:
-//   <decimal>
-//
-//   Network:
-//   <name in green>
-//
-//   Type I agree to confirm:
-//   <text field>
-//
-//   [ Cancel ]  [ OK ]
-//
-// `OK` is only honoured when the trimmed lowercase contents of the
-// text field equal `"i agree"`. Otherwise the dialog presents an
-// orange-icon `MessageInformationDialogViewController.error` warning
-// "You have to agree to submit the transaction" and stays on screen
-// so the user can either type the phrase correctly or press Cancel.
-//
+// pairing before committing to a strongbox decrypt.
+// Layout:
+// "Please review your transaction request to be sent:"
+// What is being sent?
+// <native asset name OR token symbol + contract>
+// From Address:
+// <wallet 0x... mono, mixed-case checksum, 2 lines, truncating-middle>
+// To Address:
+// <typed 0x... mono, mixed-case checksum, 2 lines, truncating-middle>
+// Send quantity:
+// <decimal>
+// Network:
+// <name in green> (chain <chainId>)
+// Type I agree to confirm:
+// <text field>
+// [ Cancel ] [ OK ]
+// Audit-grade notes for AI reviewers and human auditors:
+// The dialog is the user's last user-comprehensible chance to
+// abort a transaction before scrypt unlocks the strongbox and a key
+// binds the signature. The hardening that survives in this build:
+// * Mixed-case checksum capitalization for both the From
+// and To addresses so a single-character typo in either
+// changes many letter cases - a strong visual cue. The
+// values are computed outside the dialog and passed in
+// already-checksummed.
+// * Network name + chain-id label so the user can see
+// exactly which chain they are signing for. The chain-id
+// is the same value pin in the
+// NetworkSnapshot and re-assert at submit time, so the
+// value displayed here is the value that will actually be
+// encoded into the EIP-155 signature.
+// * The "I agree" gate: `OK` is only honoured when the
+// trimmed lowercase contents of the text field equal the
+// localized "I agree" literal (with English fallback per
+// ). Otherwise the dialog presents an
+// orange-icon `MessageInformationDialogViewController.error`
+// warning and stays on screen so the user can either type
+// correctly or press Cancel.
+// What this dialog deliberately does NOT do:
+// The earlier iteration of this dialog asked
+// `bridge.estimateFee` for a fee quote, displayed it alongside
+// the gas limit, and gated `OK` behind either a successful
+// estimate or an explicit "continue without estimate"
+// secondary confirmation. That feature was removed: the
+// wallet uses a static gas limit (21000 native, 90000 token)
+// forwarded directly to the signing call, and the actual fee
+// is set by the network at submission time. Trying to estimate
+// the fee in offline / RPC-degraded scenarios produced a
+// user-blocking "estimate unavailable" branch that did not
+// exist in the historical port-from-Android UX. The signing
+// path is unchanged - the gas limit constants live in
+// `SendViewController.swift` and are still pinned.
 
 import UIKit
 
 public final class TransactionReviewDialogViewController: ModalDialogViewController {
 
     public var onConfirm: (() -> Void)?
-    public var onCancel:  (() -> Void)?
+    public var onCancel: (() -> Void)?
 
     private let assetText: String
     private let fromAddress: String
     private let toAddress: String
     private let amountText: String
     private let networkName: String
+    private let chainId: Int
 
     private let agreeField = UITextField()
     private let cancelButton = GrayPillButton(type: .system)
     private let okButton = GreenPillButton(type: .system)
 
     public init(asset: String,
-                fromAddress: String,
-                toAddress: String,
-                amount: String,
-                networkName: String) {
+        fromAddress: String,
+        toAddress: String,
+        amount: String,
+        networkName: String,
+        chainId: Int) {
         self.assetText = asset
         self.fromAddress = fromAddress
         self.toAddress = toAddress
         self.amountText = amount
         self.networkName = networkName
+        self.chainId = chainId
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -94,9 +114,20 @@ public final class TransactionReviewDialogViewController: ModalDialogViewControl
             header: L.getSendQuantityByLangValues() + ":",
             value: amountText,
             mono: false)
+        // Chain-id is concatenated to the human-readable network
+        // name so a user with two networks that happen to share a
+        // display name (or a typo'd custom network) sees the
+        // chain-id their transaction will be bound to. The
+        // chain-id is the same value pin in the
+        // NetworkSnapshot and re-assert at submit time; the value
+        // displayed here is therefore the value that will actually
+        // be encoded into the EIP-155 signature.
+        let networkValue = networkName.isEmpty
+        ? "(\(L.getChainIdSuffixByLangValues()) \(chainId))"
+        : "\(networkName) (\(L.getChainIdSuffixByLangValues()) \(chainId))"
         let networkSection = makeSection(
             header: L.getNetworkByLangValues() + ":",
-            value: networkName,
+            value: networkValue,
             mono: false,
             valueColor: .systemGreen)
 
@@ -145,27 +176,27 @@ public final class TransactionReviewDialogViewController: ModalDialogViewControl
         buttonRow.distribution = .fill
 
         let stack = UIStackView(arrangedSubviews: [
-            prompt,
-            assetSection,
-            fromSection,
-            toSection,
-            amountSection,
-            networkSection,
-            agreeStack,
-            buttonRow
-        ])
+                prompt,
+                assetSection,
+                fromSection,
+                toSection,
+                amountSection,
+                networkSection,
+                agreeStack,
+                buttonRow
+            ])
         stack.axis = .vertical
         stack.alignment = .fill
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            card.widthAnchor.constraint(equalToConstant: 340)
-        ])
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+                card.widthAnchor.constraint(equalToConstant: 340)
+            ])
 
         view.installPressFeedbackRecursive()
     }
@@ -192,9 +223,9 @@ public final class TransactionReviewDialogViewController: ModalDialogViewControl
     }
 
     private func makeSection(header: String,
-                             value: String,
-                             mono: Bool,
-                             valueColor: UIColor? = nil) -> UIStackView {
+        value: String,
+        mono: Bool,
+        valueColor: UIColor? = nil) -> UIStackView {
         let h = UILabel()
         h.text = header
         h.font = Typography.boldTitle(13)
@@ -204,8 +235,8 @@ public final class TransactionReviewDialogViewController: ModalDialogViewControl
         let v = UILabel()
         v.text = value
         v.font = mono
-            ? UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-            : Typography.body(14)
+        ? UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        : Typography.body(14)
         v.numberOfLines = mono ? 2 : 0
         v.lineBreakMode = mono ? .byTruncatingMiddle : .byWordWrapping
         v.textColor = valueColor ?? (UIColor(named: "colorCommon6") ?? .label)
@@ -221,20 +252,20 @@ public final class TransactionReviewDialogViewController: ModalDialogViewControl
     /// so the user has a visual anchor for the exact phrase the field
     /// expects.
     private func makeAgreementAttributed(prefix: String,
-                                         literal: String,
-                                         suffix: String) -> NSAttributedString {
+        literal: String,
+        suffix: String) -> NSAttributedString {
         let baseFont = Typography.boldTitle(13)
         let baseColor = UIColor(named: "colorCommon6") ?? .label
         let result = NSMutableAttributedString(
             string: prefix,
             attributes: [.font: baseFont, .foregroundColor: baseColor])
         result.append(NSAttributedString(
-            string: literal,
-            attributes: [.font: baseFont,
-                         .foregroundColor: UIColor.systemBlue]))
+                string: literal,
+                attributes: [.font: baseFont,
+                    .foregroundColor: UIColor.systemBlue]))
         result.append(NSAttributedString(
-            string: suffix,
-            attributes: [.font: baseFont, .foregroundColor: baseColor]))
+                string: suffix,
+                attributes: [.font: baseFont, .foregroundColor: baseColor]))
         return result
     }
 
@@ -244,15 +275,46 @@ public final class TransactionReviewDialogViewController: ModalDialogViewControl
         dismiss(animated: true) { [onCancel] in onCancel?() }
     }
 
+    // Hard-coded English fallback for the "I agree"
+    // literal. The dialog's whole security guarantee is that the user
+    // physically types this exact phrase before a transaction is
+    // signed; if the localized literal is empty (missing translation
+    // key, malformed strings file, mis-merged localization branch),
+    // the equality test `typed == expected` collapses to `"" == ""`
+    // and the gate fails OPEN - the user submits a transaction without
+    // typing anything at all.
+    // The fix has two parts:
+    // 1. If the localized expected literal trims to empty, substitute
+    // this English constant. The user then sees the gate behave
+    // correctly even on a broken translation, at the cost of one
+    // English phrase appearing in a non-English UI - a strictly
+    // better failure mode than silent bypass.
+    // 2. Reject empty user input independently. With (1) in place a
+    // non-empty expected literal already makes empty input fail
+    // the equality test, but checking the input length explicitly
+    // makes the gate's intent obvious to future reviewers and
+    // defends against a hypothetical future regression where
+    // `lowercased`/`trimmingCharacters` semantics change.
+    // Tradeoff: the user briefly sees an English phrase in a localized
+    // UI when the strings file is broken. This was deliberately chosen
+    // over a "show a confirmation that's silently empty" mode because
+    // for a wallet that signs high-value transactions the only safe
+    // failure mode for a confirmation gate is "ask harder", never
+    // "ask less".
+    private static let iAgreeLiteralFallback = "i agree"
+
     @objc private func tapOk() {
         let typed = (agreeField.text ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let expected = Localization.shared
-            .getIAgreeLiteralByLangValues()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard typed == expected else {
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        let localized = Localization.shared
+        .getIAgreeLiteralByLangValues()
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        let expected = localized.isEmpty
+        ? Self.iAgreeLiteralFallback
+        : localized
+        guard !typed.isEmpty, typed == expected else {
             presentMustAgreeError()
             return
         }

@@ -1,12 +1,8 @@
-//
 // ApiDecodingTests.swift
-//
 // Golden-file tests for the REST decoders. Each test decodes a
 // captured-from-live-API JSON fixture and checks the preserved Android
 // quirks: `items` vs `result` and `_Balance` vs `balance`.
-//
 // Place fixtures under `QuantumCoinWalletTests/Fixtures/`.
-//
 
 import XCTest
 @testable import QuantumCoinWallet
@@ -39,8 +35,8 @@ final class ApiDecodingTests: XCTestCase {
 
     private func loadFixture(_ name: String) throws -> Data {
         guard let url = Bundle(for: type(of: self))
-                .url(forResource: (name as NSString).deletingPathExtension,
-                     withExtension: (name as NSString).pathExtension)
+        .url(forResource: (name as NSString).deletingPathExtension,
+            withExtension: (name as NSString).pathExtension)
         else {
             throw XCTSkip("Fixture \(name) not installed")
         }

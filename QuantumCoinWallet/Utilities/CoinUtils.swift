@@ -1,18 +1,13 @@
-//
 // CoinUtils.swift
-//
 // Pure-Swift wei -> ether string formatter. Mirrors the Android
 // `CoinUtils.formatWei` helper byte-for-byte so the Confirm Wallet
 // screen and the main wallet header agree with the Android UX.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/utils/CoinUtils.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/utils/CoinUtils.java
 // Wei amounts can exceed 2^128 (BigInteger on Android), so we avoid
 // `Decimal` (38 digits) and `Double` (15 digits) and instead operate
 // on the digit string directly: pad to 18 fractional digits, insert
 // the decimal point, then strip leading + trailing zeros.
-//
 
 import Foundation
 
@@ -43,14 +38,14 @@ public enum CoinUtils {
         if work.hasPrefix("0x") || work.hasPrefix("0X") {
             let hex = String(work.dropFirst(2))
             guard !hex.isEmpty,
-                  hex.allSatisfy({ $0.isHexDigit }),
-                  let asDecimal = hexToDecimalString(hex) else {
+            hex.allSatisfy({ $0.isHexDigit }),
+            let asDecimal = hexToDecimalString(hex) else {
                 return "0"
             }
             digits = asDecimal
         } else {
             guard !work.isEmpty,
-                  work.allSatisfy({ $0.isASCII && $0.isNumber }) else {
+            work.allSatisfy({ $0.isASCII && $0.isNumber }) else {
                 return "0"
             }
             digits = work
@@ -101,7 +96,7 @@ public enum CoinUtils {
     /// `formatUnits` strategy.
     public static func parseUnits(_ value: String?, decimals: Int) -> String {
         guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty else {
+        !raw.isEmpty else {
             return "0"
         }
         var sign = ""
@@ -129,7 +124,7 @@ public enum CoinUtils {
 
         let isAsciiDigit: (Character) -> Bool = { $0.isASCII && $0.isNumber }
         guard intPart.allSatisfy(isAsciiDigit) || intPart.isEmpty,
-              fracPart.allSatisfy(isAsciiDigit) else {
+        fracPart.allSatisfy(isAsciiDigit) else {
             return "0"
         }
 

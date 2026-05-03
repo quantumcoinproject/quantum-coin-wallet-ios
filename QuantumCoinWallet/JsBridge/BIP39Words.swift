@@ -1,12 +1,8 @@
-//
 // BIP39Words.swift
-//
 // Mirror of `GlobalMethods.ALL_SEED_WORDS` / `SEED_WORD_SET`. Populated
 // once on app launch via `Bootstrap.loadSeedsThreadEquivalent`.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/utils/GlobalMethods.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/utils/GlobalMethods.java
 
 import Foundation
 

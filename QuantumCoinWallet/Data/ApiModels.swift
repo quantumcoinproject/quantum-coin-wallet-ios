@@ -1,25 +1,20 @@
-//
 // ApiModels.swift
-//
 // Swift `Codable` models that parse the REST responses from the
 // blockchain scan API. Preserves the two Android serialization quirks
 // called out in `ios_clone_spec` §5.2:
-//
-//  - `items` vs `getResult()` discrepancy on transaction responses.
-//  - `_Balance` field backed by JSON key `balance`.
-//
+// - `items` vs `getResult` discrepancy on transaction responses.
+// - `_Balance` field backed by JSON key `balance`.
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/api/read/model/*.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/api/read/model/*.java
 
 import Foundation
 
 public enum TransactionType: String, Codable {
-    case coinTransfer    = "CoinTransfer"
-    case newToken        = "NewToken"
-    case tokenTransfer   = "TokenTransfer"
+    case coinTransfer = "CoinTransfer"
+    case newToken = "NewToken"
+    case tokenTransfer = "TokenTransfer"
     case newSmartContract = "NewSmartContract"
-    case smartContract   = "SmartContract"
+    case smartContract = "SmartContract"
 }
 
 public struct Balance: Codable {
@@ -59,9 +54,9 @@ public struct AccountTransaction: Codable {
     public let tokenSymbol: String?
 
     /// JSON key mapping mirrors Android `AccountTransactionSummary.java`:
-    ///  - `date` <- `createdAt` (Android `SERIALIZED_NAME_CREATED_AT`)
-    ///  - `type` <- `transactionType` (Android
-    ///    `SERIALIZED_NAME_TRANSACTION_TYPE`)
+    /// - `date` <- `createdAt` (Android `SERIALIZED_NAME_CREATED_AT`)
+    /// - `type` <- `transactionType` (Android
+    /// `SERIALIZED_NAME_TRANSACTION_TYPE`)
     /// Without these aliases the date column rendered empty and the
     /// transaction type was always nil because the scan API never
     /// emits literal `"date"` / `"type"` keys.
@@ -83,21 +78,21 @@ public struct AccountTransaction: Codable {
     /// server emits e.g. `"blockNumber": 12345` as a literal number.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        hash        = try c.decodeIfPresent(String.self, forKey: .hash)
-        from        = try c.decodeIfPresent(String.self, forKey: .from)
-        to          = try c.decodeIfPresent(String.self, forKey: .to)
-        type        = try c.decodeIfPresent(TransactionType.self, forKey: .type)
-        date        = try c.decodeIfPresent(String.self, forKey: .date)
-        status      = try c.decodeIfPresent(String.self, forKey: .status)
-        receipt     = try c.decodeIfPresent(Receipt.self, forKey: .receipt)
-        contract    = try c.decodeIfPresent(String.self, forKey: .contract)
+        hash = try c.decodeIfPresent(String.self, forKey: .hash)
+        from = try c.decodeIfPresent(String.self, forKey: .from)
+        to = try c.decodeIfPresent(String.self, forKey: .to)
+        type = try c.decodeIfPresent(TransactionType.self, forKey: .type)
+        date = try c.decodeIfPresent(String.self, forKey: .date)
+        status = try c.decodeIfPresent(String.self, forKey: .status)
+        receipt = try c.decodeIfPresent(Receipt.self, forKey: .receipt)
+        contract = try c.decodeIfPresent(String.self, forKey: .contract)
         tokenSymbol = try c.decodeIfPresent(String.self, forKey: .tokenSymbol)
 
-        value       = try c.decodeStringOrNumberIfPresent(forKey: .value)
+        value = try c.decodeStringOrNumberIfPresent(forKey: .value)
         blockNumber = try c.decodeStringOrNumberIfPresent(forKey: .blockNumber)
-        nonce       = try c.decodeStringOrNumberIfPresent(forKey: .nonce)
-        gasUsed     = try c.decodeStringOrNumberIfPresent(forKey: .gasUsed)
-        gasPrice    = try c.decodeStringOrNumberIfPresent(forKey: .gasPrice)
+        nonce = try c.decodeStringOrNumberIfPresent(forKey: .nonce)
+        gasUsed = try c.decodeStringOrNumberIfPresent(forKey: .gasUsed)
+        gasPrice = try c.decodeStringOrNumberIfPresent(forKey: .gasPrice)
         tokenAmount = try c.decodeStringOrNumberIfPresent(forKey: .tokenAmount)
     }
 }
@@ -141,9 +136,9 @@ public struct AccountTransactionSummaryResponse: Codable {
     /// Without this alias the field always decoded as nil, leaving
     /// `pageCount` at 0 in the controller and breaking prev/next.
     private enum CodingKeys: String, CodingKey {
-        case result      = "items"
+        case result = "items"
         case error
-        case totalPages  = "pageCount"
+        case totalPages = "pageCount"
         case pageIndex
     }
 }
@@ -155,9 +150,9 @@ public struct AccountPendingTransactionSummaryResponse: Codable {
     public let pageIndex: Int?
 
     private enum CodingKeys: String, CodingKey {
-        case result      = "items"
+        case result = "items"
         case error
-        case totalPages  = "pageCount"
+        case totalPages = "pageCount"
         case pageIndex
     }
 }
@@ -189,7 +184,7 @@ public struct AccountTokenListResponse: Codable {
     public let pageIndex: Int?
 
     private enum CodingKeys: String, CodingKey {
-        case result     = "items"
+        case result = "items"
         case error
         case totalPages
         case pageIndex

@@ -1,9 +1,6 @@
-//
 // Typography.swift
-//
 // Maps Android's `relay_poppins_*` font families to iOS system font
 // weights. See `ios_clone_spec` §3.2 for rationale.
-//
 
 import UIKit
 

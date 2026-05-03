@@ -1,23 +1,18 @@
-//
 // SeedAutoCompleteTextField.swift
-//
 // BIP39 prefix-suggestion text field used by the seed-words verify and
 // restore-from-seed screens. Mirrors Android's
 // `AutoCompleteTextView` + `SeedWordAutoCompleteAdapter`:
-//
-//   - As the user types, suggestions are filtered from
-//     `BIP39Words.all` by case-insensitive prefix.
-//   - Up to `maxSuggestions` rows are shown in a small popup directly
-//     below the field.
-//   - Tapping a row replaces the field text with the suggestion
-//     (uppercased to match Android's `textCapCharacters` input type)
-//     and dismisses the popup.
-//   - When the field resigns first responder the popup hides.
-//
+// - As the user types, suggestions are filtered from
+// `BIP39Words.all` by case-insensitive prefix.
+// - Up to `maxSuggestions` rows are shown in a small popup directly
+// below the field.
+// - Tapping a row replaces the field text with the suggestion
+// (uppercased to match Android's `textCapCharacters` input type)
+// and dismisses the popup.
+// - When the field resigns first responder the popup hides.
 // The popup is hosted on the view's window so it floats above any
 // surrounding UIScrollView clipping. It auto-tracks the field's frame
 // while the field is editing.
-//
 
 import UIKit
 
@@ -79,7 +74,7 @@ public final class SeedAutoCompleteTextField: UITextField {
 
     private func refreshPopup() {
         guard !suggestions.isEmpty,
-              let window = window else {
+        let window = window else {
             hidePopup()
             return
         }
@@ -144,7 +139,7 @@ public final class SeedAutoCompleteTextField: UITextField {
         // produce an oversized dropdown.
         let width = min(max(frameInWindow.width, 140), 240)
         var origin = CGPoint(x: frameInWindow.minX,
-                             y: frameInWindow.maxY + 2)
+            y: frameInWindow.maxY + 2)
         if origin.x + width > window.bounds.maxX - 8 {
             origin.x = window.bounds.maxX - 8 - width
         }
@@ -153,7 +148,7 @@ public final class SeedAutoCompleteTextField: UITextField {
             origin.y = frameInWindow.minY - height - 2
         }
         let frame = CGRect(origin: origin,
-                           size: CGSize(width: width, height: height))
+            size: CGSize(width: width, height: height))
         popupShadowContainer?.frame = frame
         table.frame = CGRect(origin: .zero, size: frame.size)
         // Backdrop sits behind the popup so the popup itself is tappable.
@@ -187,11 +182,11 @@ public final class SeedAutoCompleteTextField: UITextField {
 
 extension SeedAutoCompleteTextField: UITableViewDataSource, UITableViewDelegate {
     public func tableView(_ tableView: UITableView,
-                          numberOfRowsInSection section: Int) -> Int {
+        numberOfRowsInSection section: Int) -> Int {
         suggestions.count
     }
     public func tableView(_ tableView: UITableView,
-                          cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "cell", for: indexPath)
         cell.textLabel?.text = suggestions[indexPath.row].uppercased()
         cell.textLabel?.font = Typography.mono(13)
@@ -201,7 +196,7 @@ extension SeedAutoCompleteTextField: UITableViewDataSource, UITableViewDelegate 
         return cell
     }
     public func tableView(_ tableView: UITableView,
-                          didSelectRowAt indexPath: IndexPath) {
+        didSelectRowAt indexPath: IndexPath) {
         let chosen = suggestions[indexPath.row]
         text = chosen.uppercased()
         sendActions(for: .editingChanged)

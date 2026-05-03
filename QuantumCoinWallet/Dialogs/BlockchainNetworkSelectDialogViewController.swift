@@ -1,20 +1,15 @@
-//
 // BlockchainNetworkSelectDialogViewController.swift
-//
 // Modal dialog presented from the top-right network chip. Shows one
 // radio per available `BlockchainNetwork` formatted as
 // "name ( Network Id chainId)" (matching Android verbatim, including
 // the space after the opening paren) plus Cancel / OK pill buttons.
-//
 // Tapping OK with a different selection switches the active network
 // via `BlockchainNetworkManager.shared.setActive(index:)`. That call
 // already posts `.networkConfigDidChange`, so the chip label refreshes
 // without further wiring on the home controller.
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/fragment/BlockchainNetworkDialogFragment.java
-//   app/src/main/res/layout/blockchain_network_dialog_fragment.xml
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/fragment/BlockchainNetworkDialogFragment.java
+// app/src/main/res/layout/blockchain_network_dialog_fragment.xml
 
 import UIKit
 
@@ -84,8 +79,8 @@ public final class BlockchainNetworkSelectDialogViewController: ModalDialogViewC
         buttons.alignment = .center
 
         let stack = UIStackView(arrangedSubviews: [
-            titleLabel, topRule, radioGroup, bottomRule, buttons
-        ])
+                titleLabel, topRule, radioGroup, bottomRule, buttons
+            ])
         stack.axis = .vertical
         stack.alignment = .fill
         stack.spacing = 10
@@ -99,12 +94,12 @@ public final class BlockchainNetworkSelectDialogViewController: ModalDialogViewC
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            card.widthAnchor.constraint(equalToConstant: 320)
-        ])
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+                card.widthAnchor.constraint(equalToConstant: 320)
+            ])
 
         // Apply alpha-dim press feedback to OK / Cancel + RadioGroup
         // choices.
@@ -134,8 +129,8 @@ public final class BlockchainNetworkSelectDialogViewController: ModalDialogViewC
             dismiss(animated: true)
             return
         }
-        // The active-index lives inside the encrypted vault blob, and
-        // iOS no longer caches the vault main key across operations.
+        // The active-index lives inside the encrypted strongbox blob, and
+        // iOS no longer caches the strongbox main key across operations.
         // So we must collect the user's password through
         // `UnlockDialogViewController`, derive the key on the
         // background queue, persist the new active-index, and zero the
@@ -188,7 +183,7 @@ public final class BlockchainNetworkSelectDialogViewController: ModalDialogViewC
     }
 
     /// Wrong-password error layered as the shared orange OK alert
-    /// on top of the unlock dialog. `clearField()` is intentionally
+    /// on top of the unlock dialog. `clearField` is intentionally
     /// NOT called so the typed password is preserved for typo-fix
     /// retry; the password field is refocused once the alert is
     /// dismissed (handled inside `showOrangeError`).

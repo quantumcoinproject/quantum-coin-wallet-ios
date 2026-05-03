@@ -1,15 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    `com.apple.security.app-sandbox` was previously declared
+    as `<false/>` here. That key is a macOS-only entitlement; on an
+    iOS-only target it has no effect at runtime, but its presence in
+    the entitlements plist actively misleads auditors and SAST tools
+    into thinking the app has macOS-style sandboxing controls (or
+    worse, that those controls have been explicitly disabled). It has
+    been removed entirely.
+
+    iOS apps are sandboxed by default; there is no opt-in or opt-out
+    entitlement for the iOS sandbox. If this codebase is ever ported to
+    macOS Catalyst or AppKit, the macOS sandbox decision must be made
+    deliberately at that time - it should not be inherited from a
+    historical iOS plist value.
+
+    `com.apple.security.files.user-selected.read-write` is similarly a
+    macOS / Mac Catalyst entitlement; it is harmless on a pure iOS target
+    (the Documents browser / picker on iOS does not consult it). It is
+    kept here so this file remains valid if the project is ever extended
+    to a Catalyst target where the picker WOULD consult it. It has no
+    iOS effect today.
+-->
 <plist version="1.0">
 <dict>
-    <key>com.apple.security.app-sandbox</key>
-    <false/>
     <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
     <!-- iCloud Documents is intentionally NOT enabled. The Android build
-         deliberately routes backups through user-picked folders (see
-         SecureStorage portability note) so wallets stay portable across
-         devices without being bound to one iCloud account. Re-enable only
-         if the product requirement changes. -->
+         deliberately routes backups through user-picked folders so
+         wallets stay portable across devices without being bound to one
+         iCloud account. Re-enable only if the product requirement
+         changes. -->
 </dict>
 </plist>

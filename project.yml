@@ -24,7 +24,7 @@ settings:
     PRODUCT_NAME: $(TARGET_NAME)
     SWIFT_VERSION: "5.9"
     IPHONEOS_DEPLOYMENT_TARGET: "15.0"
-    TARGETED_DEVICE_FAMILY: "1,2"        # iPhone + iPad
+    TARGETED_DEVICE_FAMILY: "1,2" # iPhone + iPad
     ENABLE_BITCODE: NO
     CLANG_ENABLE_MODULES: YES
     SWIFT_STRICT_CONCURRENCY: minimal
@@ -34,6 +34,25 @@ targets:
   QuantumCoinWallet:
     type: application
     platform: iOS
+    # Regenerate `Generated/BundleHash_Generated.swift`
+    # at the start of every build so the embedded SHA-256 always
+    # matches the shipping `quantumcoin-bundle.js`. The generated
+    # constant is consumed by `BundleIntegrity.verifyOrFail` at
+    # boot (AppDelegate) and at WKURLSchemeHandler serving time
+    # (defense-in-depth). Out-of-date hashes are impossible by
+    # construction because the script declares the bundle as an
+    # input file - Xcode reruns the script whenever the bundle
+    # changes.
+    preBuildScripts:
+      - path: scripts/embed_bundle_hash.sh
+        name: "Embed JS bundle SHA-256"
+        shell: /bin/bash
+        runOnlyWhenInstalling: false
+        inputFiles:
+          - $(SRCROOT)/QuantumCoinWallet/Resources/quantumcoin-bundle.js
+        outputFiles:
+          - $(SRCROOT)/QuantumCoinWallet/Generated/BundleHash_Generated.swift
+        basedOnDependencyAnalysis: true
     sources:
       - path: QuantumCoinWallet
         excludes:
@@ -67,8 +86,67 @@ targets:
           wallet address.
         NSPhotoLibraryUsageDescription: >-
           Photo Library access is used to scan QR codes from saved images.
-        UIFileSharingEnabled: true
-        LSSupportsOpeningDocumentsInPlace: true
+        # Both flags disabled so the QuantumCoin
+        # folder no longer appears in iOS Files / iTunes / Finder.
+        # The app does NOT write user-visible files to its sandbox
+        # `Documents/` directory (audited by `rg
+        # "documentDirectory|applicationSupportDirectory|cachesDirectory"
+        # QuantumCoinWallet/`):
+        #   - Encrypted prefs / strongbox: `Application Support/`
+        #   - Staged backup exports: `tmp/<csprng>/qcw-backup-...`
+        #   - User-picked backup writes: arrive via
+        #     `UIDocumentPickerViewController` (security-scoped URL),
+        #     so the user chooses iCloud Drive / Files / etc.
+        # Closing this surface means a future commit cannot
+        # accidentally spill secrets into a Files-app-visible folder
+        # (defense-in-depth). The single existing reference to
+        # `.documentDirectory` in `CloudBackupManager` is only used
+        # as the *initial-display directoryURL* for the folder
+        # picker; the picker itself continues to work because
+        # `Documents/` still exists inside the sandbox - it is only
+        # the external visibility (iTunes / Files-app) that is
+        # removed by these flags being false.
+        UIFileSharingEnabled: false
+        LSSupportsOpeningDocumentsInPlace: false
+        # Declared so `UIApplication.canOpenURL`
+        # can return `true` for the package-manager URL schemes
+        # that Cydia / Sileo / Zebra register on a jailbroken
+        # device. Without this declaration `canOpenURL` returns
+        # `false` for every unknown scheme and the URL-handler
+        # probe in `Security/TamperGate.swift` becomes a no-op.
+        # The audit-friendly visibility of these scheme names in
+        # the Info.plist is itself a benefit: any reviewer
+        # (Apple's static analyser, an external auditor, a
+        # security researcher reading the bundle) can see at a
+        # glance that this app probes for jailbreak package
+        # managers. iOS caps `LSApplicationQueriesSchemes` at 50
+        # entries; we use 6.
+        LSApplicationQueriesSchemes:
+          - cydia
+          - sileo
+          - zbra
+          - filza
+          - undecimus
+          - activator
+        # WKAppBoundDomains intentionally NOT set. Apple's
+        # app-bound-domains policy (TN3171) only applies to
+        # HTTP/HTTPS navigations; the wallet's bundle is loaded
+        # exclusively via the custom `appassets://` scheme through
+        # `WKURLSchemeHandler`, which bypasses the policy. The
+        # previous setup paired `limitsNavigationsToAppBoundDomains
+        # = true` with the literal entry `"appassets"` (a URL-scheme
+        # name, NOT a hostname); on iOS 17+ / iOS 26 that
+        # mis-configuration silently blocks the bridge load and
+        # surfaces as a 30-second "Bridge not ready" timeout. The
+        # actual defenses for this finding are now provided by:
+        #   - The custom-scheme-only design of bridge.html (no
+        #     https loads, no remote scripts).
+        #   - The bundle-resource allowlist in
+        #     `AppAssetsSchemeHandler`.
+        #   - The bundle-hash pin.
+        # If a future change ever introduces an https:// load into
+        # this WebView, re-enable the policy AND populate this key
+        # with real public-suffix-list hostnames (NOT scheme names).
         CFBundleDocumentTypes:
           - CFBundleTypeName: "Quantum Coin Wallet"
             LSHandlerRank: "Owner"
@@ -101,6 +179,11 @@ targets:
       base:
         BUNDLE_LOADER: "$(TEST_HOST)"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/QuantumCoinWallet.app/QuantumCoinWallet"
+        # XcodeGen does not auto-generate an Info.plist for
+        # unit-test bundles by default; opt in to the
+        # auto-generation so we don't have to commit a separate
+        # plist for tests.
+        GENERATE_INFOPLIST_FILE: YES
 
 schemes:
   QuantumCoinWallet:

@@ -1,9 +1,6 @@
-//
 // LocalizationTests.swift
-//
 // Smoke tests for the `Localization` layer. Guards the preserved-typo
 // keys (`set-wallet-passowrd`) so future "fixes" do not regress lookup.
-//
 
 import XCTest
 @testable import QuantumCoinWallet

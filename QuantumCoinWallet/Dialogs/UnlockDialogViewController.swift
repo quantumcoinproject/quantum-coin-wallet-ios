@@ -1,21 +1,17 @@
-//
 // UnlockDialogViewController.swift
-//
 // Port of `unlock_dialog_fragment.xml` + the dialog-usage sites in
 // `HomeActivity.showUnlockDialog`, `SendFragment`, `WalletsFragment`.
 // Auto-focuses the password field and shows the keyboard - per the
 // `six-ui-fixes` plan that was merged on Android.
-//
 // Android reference:
-//   app/src/main/res/layout/unlock_dialog_fragment.xml
-//   app/src/main/java/com/quantumcoinwallet/app/view/activities/HomeActivity.java
-//   app/src/main/java/com/quantumcoinwallet/app/utils/GlobalMethods.java  (focusAndShowKeyboard)
-//
+// app/src/main/res/layout/unlock_dialog_fragment.xml
+// app/src/main/java/com/quantumcoinwallet/app/view/activities/HomeActivity.java
+// app/src/main/java/com/quantumcoinwallet/app/utils/GlobalMethods.java (focusAndShowKeyboard)
 
 import UIKit
 
 public final class UnlockDialogViewController: ModalDialogViewController,
-                                                UIAdaptivePresentationControllerDelegate {
+UIAdaptivePresentationControllerDelegate {
 
     public var onUnlock: ((String) -> Void)?
     public var onCancel: (() -> Void)?
@@ -39,10 +35,10 @@ public final class UnlockDialogViewController: ModalDialogViewController,
 
     private let titleLabel = UILabel()
     /// `.existingPassword` is fill-only; iOS will not prompt to
-    /// save what the user types here. The vault credential can
+    /// save what the user types here. The strongbox credential can
     /// only be written by the create-wallet flow in
     /// `HomeWalletViewController` (the sole `.newPassword` site
-    /// for `vaultUsername`).
+    /// for `strongboxUsername`).
     private let passwordField = PasswordTextField(purpose: .existingPassword)
     private let errorLabel = UILabel()
     private let unlockButton = UIButton(type: .system)
@@ -51,23 +47,21 @@ public final class UnlockDialogViewController: ModalDialogViewController,
     public override func viewDidLoad() {
         super.viewDidLoad()
 
-        // MARK: - Keychain autofill (vault unlock)
-        //
+        // MARK: - Keychain autofill (strongbox unlock)
         // Pairs `.password` (existingPassword) with a hidden
         // `.username` field carrying
-        // `CredentialIdentifier.vaultUsername`. iOS QuickType will
-        // offer the saved vault password for THIS device only -
+        // `CredentialIdentifier.strongboxUsername`. iOS QuickType will
+        // offer the saved strongbox password for THIS device only -
         // per-device username scoping prevents another device's
-        // synced vault password from being autofilled here.
-        //
+        // synced strongbox password from being autofilled here.
         // Save behavior: NONE. `.existingPassword` is fill-only;
         // iOS will not prompt to save what the user types. The
-        // vault credential can only be written by the create-
+        // strongbox credential can only be written by the create-
         // wallet flow in HomeWalletViewController (the sole
-        // `.newPassword` site for vaultUsername). User-choice
+        // `.newPassword` site for strongboxUsername). User-choice
         // override: see CredentialIdentifier file header.
         let usernameField = UsernameField.make(
-            CredentialIdentifier.vaultUsername)
+            CredentialIdentifier.strongboxUsername)
 
         titleLabel.text = Localization.shared.getUnlockWalletByLangValues()
         titleLabel.font = Typography.boldTitle(17)
@@ -107,12 +101,12 @@ public final class UnlockDialogViewController: ModalDialogViewController,
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-            card.widthAnchor.constraint(equalToConstant: 320)
-        ])
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+                card.widthAnchor.constraint(equalToConstant: 320)
+            ])
 
         applyMandatoryVisibility()
 
@@ -176,7 +170,7 @@ public final class UnlockDialogViewController: ModalDialogViewController,
     /// failures surface the same orange-warning UX the rest of the
     /// app already uses for validation errors.
     public func showOrangeError(_ message: String,
-                                title: String = Localization.shared.getErrorTitleByLangValues()) {
+        title: String = Localization.shared.getErrorTitleByLangValues()) {
         let alert = MessageInformationDialogViewController.error(
             title: title, message: message)
         alert.onClose = { [weak self] in

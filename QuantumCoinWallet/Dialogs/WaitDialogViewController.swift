@@ -1,12 +1,8 @@
-//
 // WaitDialogViewController.swift
-//
 // Port of `WaitDialog.java` + programmatic content. Used during long
 // JS-bridge calls (wallet save/open, unlock).
-//
 // Android reference:
-//   app/src/main/java/com/quantumcoinwallet/app/view/dialog/WaitDialog.java
-//
+// app/src/main/java/com/quantumcoinwallet/app/view/dialog/WaitDialog.java
 
 import UIKit
 
@@ -59,26 +55,26 @@ public final class WaitDialogViewController: ModalDialogViewController {
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinnerWrap.addSubview(spinner)
         NSLayoutConstraint.activate([
-            spinner.centerXAnchor.constraint(equalTo: spinnerWrap.centerXAnchor),
-            spinner.topAnchor.constraint(equalTo: spinnerWrap.topAnchor),
-            spinner.bottomAnchor.constraint(equalTo: spinnerWrap.bottomAnchor)
-        ])
+                spinner.centerXAnchor.constraint(equalTo: spinnerWrap.centerXAnchor),
+                spinner.topAnchor.constraint(equalTo: spinnerWrap.topAnchor),
+                spinner.bottomAnchor.constraint(equalTo: spinnerWrap.bottomAnchor)
+            ])
 
         let stack = UIStackView(arrangedSubviews: [
-            spinnerWrap, label, detailLabel, progressLabel
-        ])
+                spinnerWrap, label, detailLabel, progressLabel
+            ])
         stack.axis = .vertical
         stack.alignment = .fill
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
-            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
-            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
-            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
-            card.widthAnchor.constraint(equalToConstant: 280)
-        ])
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 24),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -24),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 24),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -24),
+                card.widthAnchor.constraint(equalToConstant: 280)
+            ])
     }
 
     /// Show / hide the wallet-being-decrypted address line. Pass nil
