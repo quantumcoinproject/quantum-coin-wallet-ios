@@ -185,7 +185,7 @@ public final class BlockchainNetworkManager {
         networks = loadBundled()
         activeIndex = 0
         applyActive()
-        NotificationCenter.default.post(name: .networkConfigDidChange, object: nil)
+        Self.postConfigChanged()
     }
 
     /// Called from `UnlockCoordinatorV2.unlockWithPasswordAndApplySession`
@@ -202,7 +202,7 @@ public final class BlockchainNetworkManager {
         let upper = max(0, networks.count - 1)
         activeIndex = max(0, min(savedIndex, upper))
         applyActive()
-        NotificationCenter.default.post(name: .networkConfigDidChange, object: nil)
+        Self.postConfigChanged()
     }
 
     /// Called from `UnlockCoordinatorV2.lock` so a foreground
@@ -214,7 +214,7 @@ public final class BlockchainNetworkManager {
         networks = loadBundled()
         activeIndex = 0
         applyActive()
-        NotificationCenter.default.post(name: .networkConfigDidChange, object: nil)
+        Self.postConfigChanged()
     }
 
     /// Switch the active blockchain network. `password` is required so
@@ -236,7 +236,7 @@ public final class BlockchainNetworkManager {
             throw error
         }
         applyActive()
-        NotificationCenter.default.post(name: .networkConfigDidChange, object: nil)
+        Self.postConfigChanged()
     }
 
     /// Append a new user-defined blockchain network. `password` is
@@ -254,7 +254,36 @@ public final class BlockchainNetworkManager {
             networks.removeLast()
             throw error
         }
-        NotificationCenter.default.post(name: .networkConfigDidChange, object: nil)
+        Self.postConfigChanged()
+    }
+
+    /// Honor the `.networkConfigDidChange` header contract: every
+    /// observer (`HomeMainViewController.handleNetworkConfigDidChange`,
+    /// `SendViewController`, etc.) reloads UITableViews / mutates Auto
+    /// Layout state in its handler and therefore MUST run on the main
+    /// thread. `setActive` is reached from a `Task.detached` in
+    /// `BlockchainNetworkSelectDialogViewController.promptUnlockThenSetActive`
+    /// (the unlock + scrypt + persist round-trip cannot block the main
+    /// queue), so a synchronous `NotificationCenter.post` from the
+    /// callee would fire observers on that background thread and crash
+    /// inside `NSISEngine` ("Modifications to the layout engine must
+    /// not be performed from a background thread..."). Centralising the
+    /// post here means every mutation site - present and future - is
+    /// safe regardless of which queue it runs on.
+    /// `async` (not `sync`) so calls already on the main queue do not
+    /// reentrantly fire observers mid-mutation; observers see the
+    /// mutation as a completed event on the next runloop tick, which
+    /// matches what every observer was already coded to expect.
+    private static func postConfigChanged() {
+        if Thread.isMainThread {
+            NotificationCenter.default.post(
+                name: .networkConfigDidChange, object: nil)
+        } else {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .networkConfigDidChange, object: nil)
+            }
+        }
     }
 
     /// Snapshot the user-added slice (i.e. everything past the bundled

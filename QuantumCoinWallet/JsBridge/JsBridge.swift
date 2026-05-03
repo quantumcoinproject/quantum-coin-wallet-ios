@@ -23,10 +23,11 @@ public final class JsBridge: @unchecked Sendable {
 
     // MARK: - Singleton
 
+    /// Singleton handle. `JsBridge` is `@unchecked Sendable` and its
+    /// `init` is non-actor, so this static is safe to access from any
+    /// thread without an actor hop.
     public static let shared = JsBridge()
 
-    // Scrypt KDF parameters - copied verbatim from `SecureStorage.java`.
-    // Do NOT change: on-disk backups will no longer decrypt.
     public static let SCRYPT_N: Int = 262_144
     public static let SCRYPT_R: Int = 8
     public static let SCRYPT_P: Int = 1

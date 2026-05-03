@@ -698,7 +698,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// may run while another path has already loaded the snapshot
     /// (e.g. add-wallet from the wallets list); in that case we
     /// short-circuit because the snapshot is fresh.
-    private static func bootstrapOrUnlock(password: String) throws {
+    nonisolated private static func bootstrapOrUnlock(password: String) throws {
         if Strongbox.shared.isSnapshotLoaded { return }
         switch UnlockCoordinatorV2.bootState() {
             case .noStrongbox:
@@ -1067,7 +1067,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// Note: `seedWords` is only populated by `createRandom`; for
     /// `walletFromPhrase` the caller already has the user's entered
     /// words and should treat the empty array here as expected.
-    private static func parseWalletEnvelope(_ envelope: String)
+    nonisolated private static func parseWalletEnvelope(_ envelope: String)
     throws -> (address: String, seedWords: [String], privateKey: String, publicKey: String) {
         guard let data = envelope.data(using: .utf8),
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1087,7 +1087,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// string the `UnlockDialogViewController` flows use rather
     /// than the bare `"\(error)"` enum-case description
     /// (`"authenticationFailed"`).
-    private static func userFacingError(_ error: Error) -> String {
+    nonisolated private static func userFacingError(_ error: Error) -> String {
         if let uc = error as? UnlockCoordinatorV2Error {
             switch uc {
                 case .authenticationFailed:

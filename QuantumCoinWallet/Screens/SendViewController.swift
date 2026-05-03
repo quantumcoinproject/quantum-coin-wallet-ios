@@ -894,8 +894,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// not displayed because the user cannot meaningfully
     /// act on the value. The constants are still a pinned
     /// cap on the gas the signed transaction will burn.
-    private static let gasLimitNative = "21000"
-    private static let gasLimitToken = "90000"
+    nonisolated private static let gasLimitNative = "21000"
+    nonisolated private static let gasLimitToken = "90000"
 
     private func presentReviewDialog(to: String, amount: String) {
         let from = currentAddress()
@@ -1202,7 +1202,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// per-lockout "wait N seconds" message - the user must
     /// understand the rate limiter is enforcing throttling so they
     /// do not blame their own typing.
-    private static func userFacingError(_ error: Error) -> String {
+    nonisolated private static func userFacingError(_ error: Error) -> String {
         if let uc = error as? UnlockCoordinatorV2Error {
             switch uc {
                 case .authenticationFailed:
@@ -1233,7 +1233,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         present(dlg, animated: true)
     }
 
-    private static func parseDecryptWallet(_ envelope: String) -> (String, String, String)? {
+    nonisolated private static func parseDecryptWallet(_ envelope: String) -> (String, String, String)? {
         guard let data = envelope.data(using: .utf8),
         let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
         let inner = obj["data"] as? [String: Any]
@@ -1249,7 +1249,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// `{ "data": { "txHash": "0x..." } }` on success; falls back to
     /// the raw envelope so something always shows in the post-send
     /// dialog even if the schema drifts.
-    private static func parseTxHash(_ envelope: String) -> String {
+    nonisolated private static func parseTxHash(_ envelope: String) -> String {
         guard let data = envelope.data(using: .utf8),
         let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return envelope }

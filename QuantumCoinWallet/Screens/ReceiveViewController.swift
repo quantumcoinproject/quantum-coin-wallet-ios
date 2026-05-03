@@ -82,23 +82,43 @@ public final class ReceiveViewController: UIViewController, HomeScreenViewTypePr
         copiedLabel.textColor = .label
         copiedLabel.alpha = 0
 
-        let copyRow = UIStackView(arrangedSubviews: [copyButton, copiedLabel])
-        copyRow.axis = .horizontal
-        copyRow.spacing = 8
-        copyRow.alignment = .center
+        // Container that keeps the copy icon at the row's horizontal
+        // center regardless of whether the "Copied" label is visible
+        // or how wide its localised string is. A plain
+        // `UIStackView([copyButton, copiedLabel])` placed inside a
+        // `.center`-aligned vertical stack centers the COMBINED width
+        // of icon + label, which leaves the icon offset to the left
+        // of the screen mid-line. Pinning `copyButton.centerX` to the
+        // container instead anchors the button itself to the center;
+        // `copiedLabel` floats to its right as a sibling whose width
+        // does not push the button.
+        let copyRow = UIView()
+        copyRow.translatesAutoresizingMaskIntoConstraints = false
+        copyRow.addSubview(copyButton)
+        copyRow.addSubview(copiedLabel)
+        copiedLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+                copyButton.centerXAnchor.constraint(equalTo: copyRow.centerXAnchor),
+                copyButton.topAnchor.constraint(equalTo: copyRow.topAnchor),
+                copyButton.bottomAnchor.constraint(equalTo: copyRow.bottomAnchor),
+                copiedLabel.leadingAnchor.constraint(equalTo: copyButton.trailingAnchor, constant: 8),
+                copiedLabel.centerYAnchor.constraint(equalTo: copyButton.centerYAnchor)
+            ])
 
-        // Encode the QR with the canonical `quantumcoin:` URI
-        // scheme. The `addressLabel` deliberately keeps showing
-        // the bare 0x-prefixed address (the URI prefix is for QR
-        // payload, not for human-readable copy) - copying the
-        // address with the system clipboard should produce
-        // something a recipient can paste into any wallet that
-        // accepts a bare hex address. See file header for the
-        // rationale (single canonical scheme; matches the
-        // wallet's brand; Send-side normalizer preserves
-        // backward compatibility with bare-hex QR codes from
-        // older builds).
-        qrView.image = Self.makeQR(from: Self.qrUriScheme + address)
+        // Encode the QR as the BARE 0x-prefixed address so any
+        // QR-scanning app (including the iOS Camera app, Google
+        // Lens, third-party wallets) can recognise the payload.
+        // An earlier build prefixed the address with a custom
+        // `quantumcoin:` URI scheme; iOS Camera surfaces unknown
+        // URL schemes as "No usable data found" because there is
+        // no registered handler app to dispatch to, so the user
+        // could not scan the receive QR with the system camera.
+        // The bare address is universally interpretable: every
+        // wallet that accepts a hex address can paste it; the
+        // Send-side scanner in this app accepts both bare hex
+        // and the legacy `quantumcoin:` prefix, so users with
+        // older QR codes are not stranded.
+        qrView.image = Self.makeQR(from: address)
         qrView.contentMode = .scaleAspectFit
 
         // Stack order from Android `receive_fragment.xml`:
@@ -128,6 +148,12 @@ public final class ReceiveViewController: UIViewController, HomeScreenViewTypePr
 
                 addressLabel.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
                 addressLabel.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+
+                // Span the full row so `copyButton.centerXAnchor ==
+                // copyRow.centerXAnchor` resolves to the actual screen
+                // mid-line, not to the mid-line of (icon + label).
+                copyRow.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+                copyRow.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
 
                 qrView.widthAnchor.constraint(equalToConstant: 220),
                 qrView.heightAnchor.constraint(equalToConstant: 220)
@@ -165,33 +191,6 @@ public final class ReceiveViewController: UIViewController, HomeScreenViewTypePr
             PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, default: 0)
         return Strongbox.shared.address(forIndex: idx) ?? ""
     }
-
-    /// QR-code URI scheme. The Receive screen renders the
-    /// wallet's address as `quantumcoin:<0x address>` so any
-    /// scanner conforming to the EIP-681-style URI convention
-    /// (scheme:target[?query]) can dispatch the payment intent
-    /// to the right app.
-    /// Audit-grade rationale (AI reviewers and human auditors):
-    /// * Single canonical scheme: the wallet emits exactly
-    /// one URI shape, which makes a manual QR-payload
-    /// comparison (DEBUG dump vs. third-party scanner
-    /// readout) deterministic.
-    /// * Brand alignment: matches the wallet name shown to
-    /// users at every other surface; an ambiguous `qcoin:`
-    /// would invite future build-vs-build inconsistencies.
-    /// * Backward compatibility: older builds shipped
-    /// bare-hex (no scheme) and `qcoin:`-prefixed QR codes.
-    /// The Send-screen scanner accepts the new
-    /// `quantumcoin:` shape AND bare hex (with or without
-    /// `0x`) so a user with an old QR code can still scan
-    /// it via this build's Send screen. `qcoin:` is NOT
-    /// accepted - we surface a "Invalid Address" toast
-    /// rather than silently strip an unknown scheme.
-    /// * The address-only display label deliberately keeps
-    /// showing the bare address: copy-to-clipboard should
-    /// produce something a recipient can paste into any
-    /// wallet that accepts a hex address.
-    private static let qrUriScheme = "quantumcoin:"
 
     private static func makeQR(from text: String) -> UIImage? {
         let f = CIFilter.qrCodeGenerator()
