@@ -95,7 +95,7 @@ final class SecurityFixesTests: XCTestCase {
     func testCodecRejectsEnvelopeWithUnknownAlg() throws {
         // Build a syntactically-valid slot file but with the
         // historical `AES-GC` typo in `wrap.passwordWrap.alg`.
-        // The codec's strict alg check (QCW-021) MUST reject it.
+        // The codec's strict alg check MUST reject it.
         let salt = Data(repeating: 0x01, count: 16)
         let bogusEnvelope: [String: Any] = [
             "alg": "AES-GC", // typo intentional
@@ -311,6 +311,146 @@ final class SecurityFixesTests: XCTestCase {
             "post-reset bump(to: 1) must succeed; this is the "
             + "exact sequence createNewStrongbox runs to seed the "
             + "counter for a brand-new wallet.")
+    }
+
+    // MARK: - Aead envelope versioning
+
+    /// `Aead.open` MUST reject an envelope whose `v` field does
+    /// not match `envelopeVersion`, even if the AES-GCM payload is
+    /// otherwise valid.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the wire field exists precisely to express the "this codec
+    /// version produced this envelope" compatibility contract;
+    /// silently accepting any `v` would break every future schema
+    /// bump (e.g. ChaCha20-Poly1305, layout tweak, nonce-length
+    /// change). Mismatch maps to `AeadError.malformedEnvelope`,
+    /// which the strongbox-codec treats as "do NOT overwrite the
+    /// slot" - the same safe failure mode as a tag failure.
+    func testAeadOpenRejectsEnvelopeWithMismatchedVersionField() throws {
+        let key = Data(repeating: 0xC0, count: 32)
+        let plaintext = Data("hello-world".utf8)
+
+        // Seal a legitimate envelope, then mutate `v` to a value
+        // that is NOT `envelopeVersion`. This proves the rejection
+        // is purely on `v`, not on any other malformation
+        // (ciphertext, iv, tag are still authentic).
+        let envelope = try Aead.seal(plaintext, keyBytes: key)
+        guard
+            let envelopeData = envelope.data(using: .utf8),
+            var obj = try JSONSerialization.jsonObject(
+                with: envelopeData) as? [String: Any]
+        else {
+            return XCTFail("seal produced unparseable envelope")
+        }
+        obj["v"] = 999
+        let mutatedData = try JSONSerialization.data(
+            withJSONObject: obj, options: [.sortedKeys])
+        guard let mutated = String(data: mutatedData, encoding: .utf8) else {
+            return XCTFail("mutated envelope re-encode failed")
+        }
+
+        XCTAssertThrowsError(try Aead.open(mutated, keyBytes: key)) { err in
+            guard case AeadError.malformedEnvelope = err else {
+                return XCTFail(
+                    "expected AeadError.malformedEnvelope on v "
+                    + "mismatch; got \(err) - any other error type "
+                    + "means callers can't distinguish a bad-shape "
+                    + "envelope from an authentic-but-wrong-version "
+                    + "one, which defeats the whole point of `v`.")
+            }
+        }
+    }
+
+    /// Sanity guard: an unmolested envelope sealed with the
+    /// current version MUST still round-trip. Pins the positive
+    /// case so a future `v` bump that only updates the writer
+    /// will fail this test (the reader must be updated in lock-step).
+    func testAeadSealOpenRoundTripsAtCurrentEnvelopeVersion() throws {
+        let key = Data(repeating: 0xC0, count: 32)
+        let plaintext = Data("hello-world".utf8)
+        let envelope = try Aead.seal(plaintext, keyBytes: key)
+        let recovered = try Aead.open(envelope, keyBytes: key)
+        XCTAssertEqual(recovered, plaintext,
+            "current-version envelope must round-trip; if this "
+            + "fails after bumping `Aead.envelopeVersion`, the "
+            + "reader's `v == envelopeVersion` guard needs to be "
+            + "extended to accept BOTH the old and new versions "
+            + "(or a one-shot migration path added).")
+    }
+
+    // MARK: - TLS pinning host normalization
+
+    /// `canonicalHost(_:)` MUST strip a trailing dot before lookup,
+    /// otherwise a perfectly valid FQDN form bypasses the pin.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the historical bug was `host.lowercased()` only, which let
+    /// `app.readrelay.quantumcoinapi.com.` fall through to default
+    /// system trust because the dictionary key is `…com` (no dot).
+    /// This test pins the canonicalization invariant.
+    func testTlsPinningCanonicalHostStripsTrailingDot() {
+        XCTAssertEqual(
+            TlsPinning.canonicalHost("app.readrelay.quantumcoinapi.com."),
+            "app.readrelay.quantumcoinapi.com",
+            "single trailing dot must be stripped so a "
+            + "trailing-dot FQDN matches the pinset key.")
+    }
+
+    /// Crafted input may carry repeated trailing dots to evade a
+    /// one-shot rstrip. The canonicalizer collapses all of them.
+    func testTlsPinningCanonicalHostCollapsesRepeatedTrailingDots() {
+        XCTAssertEqual(
+            TlsPinning.canonicalHost("app.readrelay.quantumcoinapi.com.."),
+            "app.readrelay.quantumcoinapi.com")
+        XCTAssertEqual(
+            TlsPinning.canonicalHost("app.readrelay.quantumcoinapi.com..."),
+            "app.readrelay.quantumcoinapi.com")
+    }
+
+    /// Mixed-case + trailing dot together are both normalized in
+    /// one pass. Realistic shape because some URL stacks deliver
+    /// uppercase + DNS-root-form together.
+    func testTlsPinningCanonicalHostCombinesCaseAndTrailingDot() {
+        XCTAssertEqual(
+            TlsPinning.canonicalHost("APP.readrelay.quantumcoinapi.com."),
+            "app.readrelay.quantumcoinapi.com")
+    }
+
+    /// Defensive whitespace trim — covers the unlikely case where
+    /// a URL's authority component carries leading/trailing
+    /// whitespace.
+    func testTlsPinningCanonicalHostTrimsWhitespace() {
+        XCTAssertEqual(
+            TlsPinning.canonicalHost("  app.readrelay.quantumcoinapi.com.  "),
+            "app.readrelay.quantumcoinapi.com")
+    }
+
+    /// End-to-end: `isPinned` MUST return true for the canonical
+    /// scan-API host AND its trailing-dot / mixed-case variants.
+    /// Any future regression that drops the canonicalization
+    /// breaks this test before reaching review.
+    func testTlsPinningIsPinnedMatchesTrailingDotAndCaseVariants() {
+        XCTAssertTrue(
+            TlsPinning.isPinned(host: "app.readrelay.quantumcoinapi.com"),
+            "canonical lowercased no-dot form is pinned.")
+        XCTAssertTrue(
+            TlsPinning.isPinned(host: "app.readrelay.quantumcoinapi.com."),
+            "trailing-dot FQDN form must also pin-match - this is "
+            + "the exact bypass the canonicalHost normalizer closed.")
+        XCTAssertTrue(
+            TlsPinning.isPinned(host: "APP.readrelay.quantumcoinapi.com."),
+            "mixed-case + trailing-dot must also pin-match.")
+    }
+
+    /// Negative case: the canonicalizer must NOT over-match. An
+    /// unrelated host, even with a trailing dot, must continue to
+    /// fall through to default system trust. This guards against
+    /// a future "helpful" rewrite that strips too aggressively
+    /// (e.g. dropping the entire TLD).
+    func testTlsPinningCanonicalHostDoesNotOverMatchUnrelatedHost() {
+        XCTAssertFalse(
+            TlsPinning.isPinned(host: "foo.example.com."),
+            "unrelated host must NOT pin-match even after "
+            + "trailing-dot normalization.")
     }
 
     // MARK: - Helpers

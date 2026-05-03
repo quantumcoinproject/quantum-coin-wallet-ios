@@ -456,7 +456,7 @@ HomeScreenViewTypeProviding {
             dlg.present(wait, animated: true)
             Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
                 // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-010. The reveal flow only needs
+                // auditors): the reveal flow only needs
                 // the seed words; we wipe the binary key
                 // material as soon as `decryptWalletJson`
                 // returns, so the only surviving secret in

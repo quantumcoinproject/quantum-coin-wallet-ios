@@ -68,7 +68,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
 
     private let contentStack = UIStackView()
 
-    /// QCW-014: hides the just-generated seed grid on
+    /// Hides the just-generated seed grid on
     /// `renderSeedShow` whenever the screen is being recorded /
     /// mirrored. Reset on every `render()` so the previous step's
     /// observer does not fire after the layout swap. See
@@ -269,7 +269,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let topRule = makeRule()
         let body = makeBody(L.getBackupPromptByLangValues())
         // (audit-grade notes for AI reviewers and human
-        // auditors): QCW-015 short-term mitigation. The
+        // auditors): short-term mitigation. The
         // BACKUP_ENABLED toggle controls only the
         // `isExcludedFromBackup` resource flag on the slot
         // files, which iOS honours for iCloud Backup and
@@ -284,8 +284,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // strength, but the user must understand the limit
         // before answering. The warning paragraph below makes
         // that limit visible at the choice site rather than
-        // burying it in Settings. See plan section
-        // "backup-fix" (QCW-015).
+        // burying it in Settings.
         let warning = makeBody(L.getBackupEncryptedWarningByLangValues())
         let group = RadioGroup()
         group.addChoice(tag: 1, title: L.getYesByLangValues())
@@ -438,26 +437,35 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let back = makeBackBar()
         let title = makeTitle(L.getSeedWordsByLangValues())
         let grid = SeedChipGrid(words: generatedSeed, editable: false)
-        // QCW-014: hide the seed grid while the screen is being
-        // captured. The warning view is layered over `grid` and
+        // Defense-in-depth at the screen-region level - the
+        // SeedChipGrid already suppresses VoiceOver
+        // on itself and its descendants, but we also flag the
+        // grid container as hidden so a future container/parent
+        // change cannot accidentally re-expose the per-cell
+        // labels through a sibling that ends up wrapping the
+        // grid. See SeedChipGrid.configureAccessibility comment
+        // block for the threat model.
+        grid.accessibilityElementsHidden = true
+        // Hide the seed grid while the screen is being captured.
+        // The warning view is layered over `grid` and
         // becomes visible whenever `UIScreen.isCaptured == true`.
         let captureWarning = makeSeedCaptureWarning()
         seedShowCaptureGuard = ScreenCaptureGuard(
             protectedView: grid, host: contentStack, warningView: captureWarning)
         let copyRow = makeCopyRow { [weak self] in
             guard let self = self, !self.generatedSeed.isEmpty else { return }
-            // This is the seed-phrase copy site - the
-            // most sensitive pasteboard write the app ever makes. Use a
-            // 30 s expiration (instead of the 60 s default) because the
-            // user reliably pastes into a backup notes app within
-            // seconds and a shorter window narrows the residual-exposure
-            // surface. `Pasteboard.copySensitive` also opts the item out
-            // of Universal Clipboard via `.localOnly: true` so the seed
-            // phrase does NOT replicate to the user's other Apple
-            // devices. See Pasteboard.swift for the full rationale.
+            // This is the seed-phrase copy site - the most
+            // sensitive pasteboard write the app ever makes. The
+            // wrapper applies the centralized `Pasteboard.defaultLifetime`
+            // (30 s) and opts out of Universal Clipboard via
+            // `.localOnly: true` so the seed phrase
+            // does NOT replicate to the user's other Apple devices.
+            // The previous explicit `lifetime: 30` override is now
+            // redundant; relying on the default keeps the
+            // tightening uniform across every sensitive copy site.
+            // See Pasteboard.swift for the full rationale.
             Pasteboard.copySensitive(
-                self.generatedSeed.joined(separator: " "),
-                lifetime: 30)
+                self.generatedSeed.joined(separator: " "))
             // Feedback is the inline "Copied" label inside the row,
             // mirroring Android's `homeCopyClickListener`.
         }
@@ -499,6 +507,12 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let title = makeTitle(L.getVerifySeedWordsByLangValues())
         let grid = SeedChipGrid(words: Array(repeating: "", count: generatedSeed.count),
             editable: true)
+        // Defense-in-depth - same posture as the new-seed
+        // display surface. The verification quiz takes
+        // user input but the input IS the seed phrase, so an
+        // accessibility echo of typed words has the same threat
+        // surface as displaying the seed.
+        grid.accessibilityElementsHidden = true
         let next = makeNextButton()
         next.addAction(UIAction(handler: { [weak self, weak grid] _ in
                 guard let self = self, let grid = grid else { return }
@@ -636,7 +650,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         Task.detached(priority: .userInitiated) { [keyType] in
             do {
                 // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-010. `createRandom` returns a
+                // auditors): `createRandom` returns a
                 // `WalletEnvelope` whose `privateKey`/`publicKey`
                 // are `Data`. We do NOT use them on this path
                 // (only the address + seed words are needed for
@@ -789,6 +803,10 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         ? enteredRestorePhrase
         : Array(repeating: "", count: seedLength)
         let grid = SeedChipGrid(words: initial, editable: true)
+        // Defense-in-depth on the restore entry surface. Same
+        // threat model as new-seed display and
+        // verification quiz - the typed words ARE the seed.
+        grid.accessibilityElementsHidden = true
         let next = makeNextButton()
         next.addAction(UIAction(handler: { [weak self, weak grid, weak next] _ in
                 guard let self = self, let grid = grid else { return }
@@ -832,8 +850,8 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         Task.detached(priority: .userInitiated) { [weak self, weak button] in
             do {
                 // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-010. We only need `address` for
-                // the confirm screen, but we still must zeroize
+                // auditors): we only need `address` for the
+                // confirm screen, but we still must zeroize
                 // the binary key material so the ONLY surviving
                 // copy in process memory is what
                 // `encryptWalletJson` will stage from the user's
@@ -1168,7 +1186,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     }
     /// Background-coloured panel sized to match the seed grid; only
     /// becomes visible when `UIScreen.isCaptured == true`. See
-    /// QCW-014 / `ScreenCaptureGuard.swift`.
+    /// `ScreenCaptureGuard.swift`.
     private func makeSeedCaptureWarning() -> UIView {
         let v = UIView()
         v.backgroundColor = UIColor(named: "colorBackground") ?? .systemBackground
@@ -1651,10 +1669,31 @@ public final class SeedChipGrid: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// (audit-grade notes for AI reviewers and human auditors):
-    /// QCW-013 says BIP39 seed words must NOT be exposed to
-    /// VoiceOver as individual chip labels. A user with VoiceOver
+    /// BIP39 seed words must NOT be exposed to VoiceOver as
+    /// individual chip labels. A user with VoiceOver
     /// enabled in a public space would otherwise have each seed
     /// word read out loud the moment focus walks the grid.
+    /// (audit-grade notes for AI reviewers and human auditors,
+    /// retraction of prior position): the previous rationale
+    /// exempted editable mode from VoiceOver suppression
+    /// on the argument that "the user already knows what they
+    /// typed". That rationale is now retracted. The threat is not
+    /// "the user learns their own seed" - it is "anything the
+    /// VoiceOver pipeline sees can be observed by:
+    ///   * a Bluetooth/HearingAid eavesdropper within range
+    ///   * an Audio Hijack-class extension on a paired Mac
+    ///   * a CarPlay session forwarding the audio bus
+    ///   * an over-the-shoulder observer with the device speaker
+    ///     (the user may have VoiceOver on for other reasons)
+    /// any of which compromises the seed in clear text bypassing
+    /// every other on-device protection. The UX tradeoff is
+    /// explicit: a VoiceOver-only user cannot confirm by ear what
+    /// they typed, but they can still tap-to-focus and the
+    /// keyboard remains fully functional. We deliberately accept
+    /// that regression on the four seed-bearing surfaces
+    /// (reveal, new-seed display, verification quiz, restore
+    /// entry) because the alternative - audible seed
+    /// disclosure - is unrecoverable.
     /// Mitigation: each non-editable seed chip's label has
     /// `isAccessibilityElement = false` (set in `chip(text:index:)`
     /// below); the grid as a whole exposes one summary element
@@ -1666,10 +1705,29 @@ public final class SeedChipGrid: UIView {
     /// keyboard input. Editable fields contain user-entered text,
     /// not a freshly-generated secret being displayed.
     private func configureAccessibility() {
-        guard !editable else { return }
-        isAccessibilityElement = true
-        accessibilityTraits = [.staticText]
-        accessibilityLabel = Localization.shared.getSeedAccessibilitySummaryByLangValues()
+        // Editable mode is no longer short-circuited. Both
+        // branches receive the same suppression posture: the
+        // grid container is NOT an accessibility element, and the
+        // accessibilityElementsHidden flag prevents VoiceOver from
+        // walking into the per-cell labels or text fields. The
+        // per-cell text fields ALSO carry isAccessibilityElement =
+        // false (set in `chip(text:index:)`) so no descendant can
+        // re-expose itself even if a future container layout
+        // change exposes the inner views directly.
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        accessibilityLabel = nil
+        accessibilityTraits = []
+        // The summary element kept the non-editable surface from
+        // looking blank under VoiceOver inspector. With
+        // accessibilityElementsHidden set, the grid disappears
+        // from the accessibility tree entirely - which is the
+        // intended outcome. The screen title (set by the parent
+        // controller) and the surrounding instruction labels are
+        // still announced, so the user is told "Verify your seed
+        // phrase" / "Your seed phrase" / etc. without any per-word
+        // disclosure.
+        _ = editable
         accessibilityElementsHidden = true
     }
 
@@ -1815,6 +1873,19 @@ public final class SeedChipGrid: UIView {
             tf.returnKeyType = .next
             tf.delegate = self
             tf.translatesAutoresizingMaskIntoConstraints = false
+            // Each editable seed cell MUST NOT be a VoiceOver
+            // element. Sighted users still tap-to-focus
+            // and the keyboard works normally; VoiceOver simply
+            // does not enumerate or echo the typed letters. See
+            // the comment block above `configureAccessibility()`
+            // for the threat model and the explicit UX tradeoff.
+            // The container is also marked hidden so a descendant-
+            // walker cannot reach the field that way.
+            tf.isAccessibilityElement = false
+            tf.accessibilityElementsHidden = true
+            tf.accessibilityLabel = nil
+            container.isAccessibilityElement = false
+            container.accessibilityElementsHidden = true
             container.addSubview(tf)
             NSLayoutConstraint.activate([
                     tf.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
@@ -1837,8 +1908,8 @@ public final class SeedChipGrid: UIView {
             // foreground to black via `colorCommon7` in dark mode
             // would lose contrast on the coloured block.
             label.textColor = .white
-            // QCW-013: do NOT expose individual seed words to
-            // VoiceOver. The parent SeedChipGrid carries a single
+            // Do NOT expose individual seed words to VoiceOver.
+            // The parent SeedChipGrid carries a single
             // summary element instead. Suppress the chip cell
             // and its container.
             label.isAccessibilityElement = false

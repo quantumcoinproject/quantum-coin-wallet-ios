@@ -67,7 +67,7 @@
 // the wall-clock `CFAbsoluteTimeGetCurrent()`. The wall clock
 // is user-adjustable from Settings -> General -> Date & Time,
 // so a forward clock jump would otherwise immediately exit any
-// in-progress lockout (see QCW-003). `mach_continuous_time()`:
+// in-progress lockout. `mach_continuous_time()`:
 // - Counts real elapsed nanoseconds since boot, including
 // while the device was sleeping (locked screen). An attacker
 // cannot extend the elapsed-time window by locking the
@@ -116,7 +116,7 @@ public enum UnlockAttemptLimiter {
     /// (audit-grade notes for AI reviewers and human auditors):
     /// the elapsed-time computation uses `mach_continuous_time()`,
     /// which is immune to wall-clock writes from Settings (see
-    /// QCW-003 and the file header). Reboot is detected by the
+    /// the file header). Reboot is detected by the
     /// stored monotonic value being LARGER than the current one;
     /// we then apply the maximum lockout tier (1 hr) so a
     /// reboot mid-failure-storm cannot bypass the gate.
@@ -262,7 +262,7 @@ public enum UnlockAttemptLimiter {
     /// Bumped from `state-v1` to `state-v2` when the
     /// `lastFailureAt` (CFAbsoluteTime) field was replaced with
     /// `lastFailureMonotonicNanos` (mach_continuous_time
-    /// nanoseconds) for QCW-003. The account string is part of
+    /// nanoseconds). The account string is part of
     /// the Keychain primary key, so the old v1 entry is left in
     /// place and a fresh v2 entry is created on first read; the
     /// v1 entry is never read again. With "no current users"

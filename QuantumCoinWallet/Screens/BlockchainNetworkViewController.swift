@@ -814,7 +814,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
     /// understands the gate is throttling them by design. The
     /// network add path is now rate-limited because the limiter
     /// pre-check + recordFailure live inside
-    /// `UnlockCoordinatorV2.persistSnapshot` (see QCW-002).
+    /// `UnlockCoordinatorV2.persistSnapshot`.
     private func showUnlockError(over unlock: UnlockDialogViewController,
         error: Error?) {
         if let uc = error as? UnlockCoordinatorV2Error,

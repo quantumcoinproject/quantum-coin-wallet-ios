@@ -198,8 +198,7 @@ public final class PrefConnect {
         do {
             let data = try JSONSerialization.data(withJSONObject: memo, options: [.sortedKeys, .prettyPrinted])
             // (audit-grade notes for AI reviewers and human
-            // auditors): QCW-024. Apple's default file
-            // protection class is
+            // auditors): Apple's default file protection class is
             // `.completeUntilFirstUserAuthentication`, which
             // means the file is encrypted at rest but its key
             // is unwrapped on FIRST unlock after boot and stays
@@ -219,7 +218,7 @@ public final class PrefConnect {
             // explicitly makes the pref file unreadable to
             // forensic tools that pull bytes from the device
             // BEFORE the first unlock after boot, which closes
-            // the gap noted in QCW-024.
+            // the at-rest exposure gap.
             // Power-loss safety: `.atomic` writes the file to a
             // sibling temp path and renames atomically; the
             // protection-class flag is set on the final file

@@ -23,8 +23,8 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
     /// the closure-based 600ms hide does not retain the row when the
     /// VC has been popped.
     private weak var copiedLabel: UILabel?
-    /// QCW-014: hides the seed grid when the screen is being
-    /// recorded or mirrored (AirPlay, QuickTime, Control-Center
+    /// Hides the seed grid when the screen is being recorded
+    /// or mirrored (AirPlay, QuickTime, Control-Center
     /// recording, etc.). See `ScreenCaptureGuard.swift` for the
     /// full set of caveats and tradeoffs.
     private var captureGuard: ScreenCaptureGuard?
@@ -32,8 +32,8 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
     /// Caller is responsible for supplying ALREADY-decrypted seed
     /// words. The reveal screen only displays the words and never
     /// touches the JS bridge, the strongbox, or any key bytes -
-    /// so QCW-010's binary-channel discipline holds: the per-
-    /// wallet `WalletEnvelope.privateKey`/`publicKey` were already
+    /// so the binary-channel discipline holds: the per-wallet
+    /// `WalletEnvelope.privateKey`/`publicKey` were already
     /// zeroized by the unlock flow before this VC was instantiated.
     public init(seedWords: [String]) {
         self.seedWords = seedWords
@@ -73,6 +73,15 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
         stack.addArrangedSubview(makeTitle(Localization.shared.getSeedWordsByLangValues()))
         stack.addArrangedSubview(makeRule())
         let grid = SeedChipGrid(words: seedWords, editable: false)
+        // Defense-in-depth on the reveal surface. The
+        // SeedChipGrid already suppresses VoiceOver on itself
+        // and its descendants; we ALSO mark the grid container as
+        // hidden so a future container/parent change cannot
+        // accidentally re-expose the per-cell labels through a
+        // sibling that wraps the grid. See
+        // SeedChipGrid.configureAccessibility for the threat
+        // model and the explicit UX tradeoff for VoiceOver users.
+        grid.accessibilityElementsHidden = true
         stack.addArrangedSubview(grid)
         stack.addArrangedSubview(makeRule())
         stack.addArrangedSubview(makeCopyRow())
@@ -92,7 +101,7 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
     }
 
     /// Warning panel pinned over the seed grid whenever the screen
-    /// is being captured. See QCW-014.
+    /// is being captured.
     private func makeCaptureWarning() -> UIView {
         let v = UIView()
         v.backgroundColor = (UIColor(named: "colorBackground") ?? .systemBackground)
@@ -230,11 +239,14 @@ public final class RevealWalletViewController: UIViewController, HomeScreenViewT
             let column = (idx % 4) + 1
             return "\(letter)\(column) = \(word)"
         }
-        // Spelled-out seed grid copy. Same
-        // sensitivity class as the raw seed phrase - 30 s window opts
-        // out of Universal Clipboard and minimises residual exposure
-        // on this device. See Pasteboard.swift.
-        Pasteboard.copySensitive(lines.joined(separator: "\n"), lifetime: 30)
+        // Spelled-out seed grid copy. Same sensitivity class as the
+        // raw seed phrase - the wrapper opts out of Universal
+        // Clipboard and applies the project default lifetime
+        // (Pasteboard.defaultLifetime = 30 s).
+        // The previous explicit `lifetime: 30` override is now
+        // redundant; we rely on the centralized default so a future
+        // tightening (e.g. to 15 s) applies uniformly.
+        Pasteboard.copySensitive(lines.joined(separator: "\n"))
         copiedLabel?.isHidden = false
         let lbl = copiedLabel
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {

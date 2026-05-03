@@ -32,6 +32,23 @@ public final class AppDelegate: UIResponder, UIApplicationDelegate {
         // before the user opens the app's first backup screen.
         CloudBackupManager.shared.cleanupStaleStagedExports()
 
+        // One-shot cleanup of the legacy per-device wrap-key
+        // Keychain entry left behind by older builds. The
+        // wrap-key infrastructure was deleted along with the
+        // never-shipped biometric unlock UI; the on-disk Keychain
+        // item it owned must be removed so a forensic adversary
+        // who later jailbreaks the device cannot extract it.
+        // Errors are intentionally suppressed and logged - a
+        // Keychain hiccup must NEVER block launch.
+        do {
+            let deleted = try KeychainWrapStore.deleteLegacyWrapKeyIfPresent()
+            Logger.debug(category: "STRONGBOX_LEGACY_WRAP_CLEANUP",
+                deleted ? "legacy wrap-key entry removed" : "no legacy wrap-key entry to remove")
+        } catch {
+            Logger.debug(category: "STRONGBOX_LEGACY_WRAP_CLEANUP",
+                "delete failed (suppressed): \(error)")
+        }
+
         // Register the app-switcher snapshot
         // redaction overlay BEFORE the first `willResignActive` can
         // fire, so the very first background transition produces a

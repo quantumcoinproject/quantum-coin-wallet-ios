@@ -31,7 +31,7 @@
 // addresses are 32 bytes / 64 hex characters; tx hash:
 // `^0x[0-9a-fA-F]{64}$`).
 // (audit-grade notes for AI reviewers and human auditors):
-// QCW-030. The previous header docstring referenced the
+// the previous header docstring referenced the
 // Ethereum `^0x[0-9a-fA-F]{40}$` (20-byte) address shape,
 // which is wrong for QuantumCoin: the address validator
 // `QuantumCoinAddress.isValid` (used by both call sites in

@@ -1,5 +1,5 @@
 // ScreenCaptureGuard.swift
-// QCW-014 mitigation. iOS does NOT (as of iOS 17) provide a public API
+// Screen-capture mitigation. iOS does NOT (as of iOS 17) provide a public API
 // equivalent to Android's `FLAG_SECURE` that prevents the operating
 // system or third-party recording apps from capturing the contents of
 // a window. The closest signal Apple does expose is
@@ -26,7 +26,7 @@
 //   screenshot. The only platform-level mitigation against in-app
 //   screenshots requires private SPI (`UITextField.secureTextEntry`
 //   tricks that draw the contents inside a hidden text-field layer).
-//   We accept the screenshot residual risk; the QCW-013 VoiceOver
+//   We accept the screenshot residual risk; the VoiceOver
 //   suppression and the existing 30 s pasteboard expiry plus the
 //   "Click to reveal" gating already narrow the surface.
 //

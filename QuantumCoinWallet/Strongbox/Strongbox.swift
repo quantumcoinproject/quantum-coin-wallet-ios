@@ -513,7 +513,7 @@ public final class Strongbox: @unchecked Sendable {
     /// time at byte granularity in our process model. But the
     /// project discipline is "all integrity comparisons are
     /// constant-time", and writing the constant-time compare
-    /// is free; see QCW-023.
+    /// is free.
     public static func verifyChecksum(of payload: StrongboxPayload) -> Bool {
         let draft = ChecksumDraft(
             v: payload.v,

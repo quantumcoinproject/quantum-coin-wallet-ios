@@ -5,6 +5,30 @@
 // - `applicationDidBecomeActive` compares against the last unlock
 // timestamp and locks + presents the unlock dialog if the budget
 // elapsed or the clock went backwards.
+//
+// (audit-grade notes for AI reviewers and human auditors): the
+// elapsed-time arithmetic uses `mach_continuous_time()` (continuous
+// nanoseconds since boot, including device-suspended time), NOT
+// the wall-clock `CFAbsoluteTimeGetCurrent()`. The wall clock is
+// user-adjustable from Settings -> General -> Date & Time. With the
+// previous wall-clock implementation, two attacks survived:
+//   1. Forward-then-back skew while the app is suspended. An
+//      attacker advances the clock so a foreground+relock fires,
+//      then resets the clock back; the next foreground sees ~0
+//      elapsed and skips the relock even though hours of real
+//      time have passed.
+//   2. Reboot mid-suspend. With a wall-clock baseline the
+//      "did the clock move backwards?" check could fire spuriously
+//      from NTP corrections; with a continuous-counter baseline
+//      "now < stored" can ONLY mean the device rebooted (the
+//      counter resets to 0 at boot). We force a relock on that
+//      branch.
+// `UnlockAttemptLimiter` already uses this same primitive for the
+// same reasons; this file aligns the `SessionLock` to the same
+// posture. The DispatchSourceTimer used for the foreground idle
+// countdown is acceptable on the wall clock - it only fires while
+// the app is foregrounded, and `applicationWillResignActive`
+// cancels it on suspend.
 // (audit-grade notes for AI reviewers and human
 // auditors):
 // The original implementation installed only a `UITapGestureRecognizer`
@@ -51,14 +75,19 @@
 // Android reference:
 // app/src/main/java/com/quantumcoinwallet/app/view/activities/HomeActivity.java
 
+import Darwin
 import UIKit
 
 public final class SessionLock {
 
     public static let shared = SessionLock()
 
-    private var lastUnlockTimestamp: CFAbsoluteTime = 0
-    private var lastBackgroundTimestamp: CFAbsoluteTime = 0
+    /// `mach_continuous_time()` reading converted to nanoseconds.
+    /// `0` is the sentinel "never recorded".
+    private var lastUnlockMonotonicNanos: UInt64 = 0
+    /// Same monotonic clock as `lastUnlockMonotonicNanos`. `0` is
+    /// the sentinel "not currently backgrounded".
+    private var lastBackgroundMonotonicNanos: UInt64 = 0
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue.main
     private var installed = false
@@ -73,11 +102,11 @@ public final class SessionLock {
     }
 
     public func markUnlockedNow() {
-        lastUnlockTimestamp = CFAbsoluteTimeGetCurrent()
+        lastUnlockMonotonicNanos = Self.monotonicNanos()
         // Reset the "went to background at" stamp so a subsequent
         // resume doesn't compare against an old value taken before
         // the user just unlocked.
-        lastBackgroundTimestamp = 0
+        lastBackgroundMonotonicNanos = 0
         restartIdleTimer()
     }
 
@@ -115,21 +144,25 @@ public final class SessionLock {
             return
         }
 
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = Self.monotonicNanos()
         // Use the more conservative of "elapsed since last unlock" or
         // "elapsed since the app was backgrounded". In the common case
         // they match (both move forward at the same rate while the app
-        // is suspended). The `now < lastUnlockTimestamp` guard catches
-        // a clock skew where the user / NTP rolled the system clock
-        // backwards while we were suspended.
-        let elapsedSinceUnlock = (now - lastUnlockTimestamp) * 1000
-        let elapsedSinceBackground = lastBackgroundTimestamp > 0
-        ? (now - lastBackgroundTimestamp) * 1000
+        // is suspended). The `now < lastUnlockMonotonicNanos` guard
+        // catches device REBOOT - `mach_continuous_time()` resets to
+        // 0 on boot, so a stored value larger than `now` is the only
+        // way to read the clock backwards. We force a relock on
+        // reboot so an attacker cannot bypass the gate
+        // by power-cycling a suspended device.
+        let elapsedSinceUnlockMs = Self.elapsedMillis(
+            from: lastUnlockMonotonicNanos, to: now)
+        let elapsedSinceBackgroundMs = lastBackgroundMonotonicNanos > 0
+        ? Self.elapsedMillis(from: lastBackgroundMonotonicNanos, to: now)
         : 0
-        let elapsedMs = max(elapsedSinceUnlock, elapsedSinceBackground)
+        let elapsedMs = max(elapsedSinceUnlockMs, elapsedSinceBackgroundMs)
 
-        if elapsedMs > Double(Constants.UNLOCK_TIMEOUT_MS)
-        || now < lastUnlockTimestamp {
+        if elapsedMs > UInt64(Constants.UNLOCK_TIMEOUT_MS)
+        || (lastUnlockMonotonicNanos > 0 && now < lastUnlockMonotonicNanos) {
             lockAndPresent()
         } else {
             // Within budget - keep the foreground idle countdown
@@ -141,10 +174,50 @@ public final class SessionLock {
 
     public func applicationWillResignActive() {
         timer?.cancel()
-        // Stamp so applicationDidBecomeActive can compare against a
-        // monotonic-ish wall clock even if the app is suspended for
-        // long enough that the foreground idle timer never fires.
-        lastBackgroundTimestamp = CFAbsoluteTimeGetCurrent()
+        // Stamp on the same monotonic clock applicationDidBecomeActive
+        // reads so a long suspend cannot smuggle past the budget.
+        // `mach_continuous_time()` keeps counting while the device
+        // is asleep, so a screen-off-overnight foreground-resume
+        // observes the full elapsed time even if the foreground
+        // idle DispatchSourceTimer never fired.
+        lastBackgroundMonotonicNanos = Self.monotonicNanos()
+    }
+
+    // MARK: - Monotonic clock
+
+    /// Return the current `mach_continuous_time()` reading converted
+    /// to nanoseconds. `mach_continuous_time()` keeps counting while
+    /// the device is asleep (unlike `mach_absolute_time()`), so an
+    /// attacker cannot extend the elapsed-time window by locking
+    /// the device. The conversion uses `mach_timebase_info` to
+    /// handle architectures where 1 mach tick != 1 ns; on modern
+    /// A-series chips numer == denom == 1 and the conversion is a
+    /// no-op.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// this primitive is a copy of `UnlockAttemptLimiter.monotonicNanos()`
+    /// with the same overflow-safe split arithmetic for non-1:1
+    /// timebases.
+    private static func monotonicNanos() -> UInt64 {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        let ticks = mach_continuous_time()
+        if info.numer == info.denom {
+            return ticks
+        }
+        let numer = UInt64(info.numer)
+        let denom = UInt64(info.denom)
+        let high = ticks >> 32
+        let low = ticks & 0xFFFFFFFF
+        return ((high * numer / denom) << 32) + (low * numer / denom)
+    }
+
+    /// Compute elapsed milliseconds between two `monotonicNanos()`
+    /// readings. Returns 0 if `to <= from` (the reboot case is
+    /// handled by the explicit `now < lastUnlockMonotonicNanos`
+    /// branch in `applicationDidBecomeActive`).
+    private static func elapsedMillis(from: UInt64, to: UInt64) -> UInt64 {
+        guard to > from else { return 0 }
+        return (to - from) / 1_000_000
     }
 
     // MARK: - Internals

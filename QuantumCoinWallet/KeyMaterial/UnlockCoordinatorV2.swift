@@ -46,9 +46,28 @@
 // 10. Strongbox.verifyChecksum(payload) // post-decrypt
 // integrity check; tamperDetected on mismatch.
 // 11. Strongbox.shared.installSnapshot(payload)
-// 12. Optional: regenerate `wrap.keychainWrap` if absent
-// (e.g. fresh device after iCloud restore) so the next
-// unlock can use the biometric path.
+// Step 12 ("Optional: regenerate `wrap.keychainWrap` if
+// absent") was deliberately removed. The per-device wrap key
+// was the storage primitive
+// for a future biometric-unlock UI that was never wired up;
+// there is no in-app affordance that ever consumes the wrap.
+// Keeping the regeneration path was generating a 32-byte
+// AES key on first unlock, persisting it to the Keychain,
+// and re-encrypting `mainKey` under it on every subsequent
+// unlock - all of which produced reachable ciphertext that
+// added attack surface (the Keychain entry could be
+// extracted with a jailbreak; the disk-side `wrap.keychainWrap`
+// could be transported off-device) without enabling any
+// user-facing feature. We delete the wrap-key code path
+// entirely; if a biometric unlock UI is ever added, it
+// should be designed against `kSecAttrAccessControl =
+// biometryCurrentSet` (which forces the wrap to invalidate
+// when a coerced enrollment changes the biometric set)
+// rather than the unconditional Keychain entry that this
+// removal walks back. The schema field
+// `decoded.keychainWrap` is retained as `Optional<Aead>?`
+// for forward read-compat with old slot files; new writes
+// always pass `keychainWrap: nil`.
 // Persist sequence:
 // 1. plaintext = JSONEncoder().encode(payload, sortedKeys)
 // 2. padded = StrongboxPadding.pad(plaintext)
@@ -208,7 +227,7 @@ public enum UnlockCoordinatorV2 {
     /// without depending on the call site to remember to wire
     /// the limiter in. The previous design left the bookkeeping
     /// to `unlockWithPasswordAndApplySession`, which the Send
-    /// path bypassed (see QCW-001). Centralising here makes
+    /// path used to bypass. Centralising here makes
     /// "limiter is engaged" a code-level invariant rather than a
     /// per-call-site contract that future contributors might
     /// forget.
@@ -363,7 +382,7 @@ public enum UnlockCoordinatorV2 {
         // device-local high-water mark engages. See
         // `KeychainGenerationCounter` for the
         // power-loss-safety, uninstall, and account-scope
-        // discussions. See QCW-004.
+        // discussions.
         let storedCounter = (try? KeychainGenerationCounter.read())
         if let counter = storedCounter {
             if decoded.generation < counter {
@@ -393,17 +412,15 @@ public enum UnlockCoordinatorV2 {
                 "unlock-time bump failed: \(error)")
         }
 
-        // Step 8: regenerate `wrap.keychainWrap` if missing.
-        // On a freshly-restored device the wrap is absent; we
-        // lazily re-establish it on first successful password
-        // unlock so the next unlock can skip the password.
-        if decoded.keychainWrap == nil {
-            tryRegenerateKeychainWrap(
-                mainKey: mainKey,
-                decoded: decoded,
-                macKey: macKey,
-                winningSlot: pickSlotMatching(decoded: decoded))
-        }
+        // Step 8 ("regenerate `wrap.keychainWrap` if missing")
+        // intentionally removed. The biometric unlock
+        // path that this regeneration was preparing for never
+        // shipped; the wrap added attack surface (extractable
+        // Keychain entry + transportable disk-side ciphertext)
+        // without enabling any user feature. New writes pass
+        // `keychainWrap: nil`; old writes are still readable via
+        // the `Optional<AeadEnvelope>?` schema field for
+        // forward read-compat. See the file header.
 
         // Limiter reset on confirmed-correct password. Done at
         // the very end so a checksum / decode failure between
@@ -424,7 +441,7 @@ public enum UnlockCoordinatorV2 {
     /// has redundancy from the start.
     /// MUST be called from a background queue.
     /// (audit-grade notes for AI reviewers and human auditors):
-    /// the residual-slot guard at the top closes QCW-020. The
+    /// the residual-slot guard at the top is defense-in-depth. The
     /// canonical caller (`bootstrapOrUnlock`) only invokes this
     /// helper after `bootState() == .noStrongbox`, so the guard
     /// is defense-in-depth for a future caller that might skip
@@ -438,7 +455,7 @@ public enum UnlockCoordinatorV2 {
     /// no error to surface. The guard makes that mistake a
     /// loud `tamperDetected` instead of a silent loss.
     public static func createNewStrongbox(password: String) throws {
-        // Defense-in-depth residual-slot guard. See QCW-020.
+        // Defense-in-depth residual-slot guard.
         // We re-run the readWinner trial here even though the
         // canonical caller already did it via `bootState()`;
         // a future contributor who adds a new caller to this
@@ -575,7 +592,7 @@ public enum UnlockCoordinatorV2 {
         // Initialise the anti-rollback counter to match the
         // freshly-written generation. Same power-loss-safety
         // ordering as `persistSnapshot`: counter bump comes
-        // AFTER the slot writes succeed. See QCW-004.
+        // AFTER the slot writes succeed.
         // (audit-grade notes for AI reviewers and human
         // auditors): we RESET the counter (delete the prior
         // entry) before the bump, not just call `bump(to: 1)`.
@@ -635,8 +652,8 @@ public enum UnlockCoordinatorV2 {
     /// camera-permission flag) is rate-limited without depending
     /// on the call site to remember to wire the limiter in. The
     /// previous design left the bookkeeping to call sites,
-    /// which the Network add / switch flows did not perform
-    /// (see QCW-002). Centralising here makes "limiter is
+    /// which the Network add / switch flows did not perform.
+    /// Centralising here makes "limiter is
     /// engaged" a code-level invariant rather than a per-call-
     /// site contract that future contributors might forget.
     public static func persistSnapshot(_ payload: StrongboxPayload,
@@ -648,7 +665,7 @@ public enum UnlockCoordinatorV2 {
         // recently), the persist path re-derives the mainKey
         // from the user-typed password every call and therefore
         // is its own brute-force surface for any UI that
-        // collects the password. See QCW-002.
+        // collects the password.
         switch UnlockAttemptLimiter.currentDecision() {
             case .lockedFor(let remaining):
             throw UnlockCoordinatorV2Error.tooManyAttempts(remainingSeconds: remaining)
@@ -730,7 +747,12 @@ public enum UnlockCoordinatorV2 {
                 kdfSalt: decoded.kdfSalt,
                 kdfParams: decoded.kdfParams,
                 passwordWrap: decoded.passwordWrap,
-                keychainWrap: decoded.keychainWrap,
+                // Always write nil. The on-disk field is
+                // retained as Optional for forward
+                // read-compat with old slot files, but new
+                // writes never re-emit a per-device wrap. See
+                // the file header step-12 deletion comment.
+                keychainWrap: nil,
                 strongbox: newStrongboxEnv,
                 macKey: macKey,
                 uiBlock: [:],
@@ -749,7 +771,8 @@ public enum UnlockCoordinatorV2 {
         // leave `disk_gen < counter` after a crash and would
         // trigger a false rollback rejection on the next
         // unlock, bricking the wallet for a legitimate user.
-        // See `KeychainGenerationCounter` and QCW-004.
+        // See `KeychainGenerationCounter` for the full
+        // rationale.
         do {
             try KeychainGenerationCounter.bump(to: newGeneration)
         } catch {
@@ -842,8 +865,8 @@ public enum UnlockCoordinatorV2 {
     /// before this helper existed, the Send screen called
     /// `JsBridge.decryptWalletJson` directly inside its unlock
     /// dialog's onUnlock callback, paying the limiter NO
-    /// attention - QCW-001 made this an open password oracle
-    /// because the per-wallet `encryptedSeed` is sealed under
+    /// attention - that made the Send path an open password
+    /// oracle because the per-wallet `encryptedSeed` is sealed under
     /// the same password as `passwordWrap`. Routing the call
     /// through this helper makes the brute-force-limit
     /// engagement a code-level invariant for that surface too.
@@ -855,8 +878,8 @@ public enum UnlockCoordinatorV2 {
     /// distinguish them. False positives (locking out a user
     /// holding a corrupt file) are bounded by the same
     /// stair-stepped backoff that protects the unlock dialog;
-    /// false negatives would re-open the QCW-001 oracle, which
-    /// is the worse failure mode.
+    /// false negatives would re-open the password oracle on
+    /// the Send path, which is the worse failure mode.
     /// Throws `tooManyAttempts(remainingSeconds:)` on lockout.
     /// MUST be called from a background queue (the inner `op`
     /// is expected to do scrypt or a blocking JS bridge call).
@@ -1061,8 +1084,8 @@ public enum UnlockCoordinatorV2 {
         // auditors): the `alg` literal is "AES-GCM" exactly,
         // matching the canonical schema invariant enforced by
         // `StrongboxFileCodec.AeadEnvelope.expectedAlg`. A
-        // typo here (e.g. the historical `AES-GC` mistake from
-        // QCW-021) is now caught at decode time by the
+        // typo here (e.g. the historical `AES-GC` mistake) is
+        // now caught at decode time by the
         // `decodeEnvelope` validator AND on first read by the
         // codec's strict-alg gate, so the same mistake cannot
         // silently land in a written slot file.
@@ -1110,55 +1133,13 @@ public enum UnlockCoordinatorV2 {
         return g
     }
 
-    /// Lazy regeneration of `wrap.keychainWrap` after a
-    /// password unlock on a freshly-restored device. Best-
-    /// effort: any failure (Keychain busy, RNG error) is
-    /// logged but not propagated, because the password unlock
-    /// already succeeded and the wrap is purely an opt-in
-    /// convenience for the next unlock.
-    private static func tryRegenerateKeychainWrap(
-        mainKey: Data,
-        decoded: StrongboxFileCodec.DecodedFile,
-        macKey: Data,
-        winningSlot: AtomicSlotWriter.Slot
-    ) {
-        do {
-            // (audit-grade notes for AI reviewers and human
-            // auditors): the per-device wrap key is zeroized in
-            // `defer` to mirror the `mainKey` / `derivedKey`
-            // discipline elsewhere in this file. Without the
-            // zeroize, the wrap key would sit in the heap until
-            // ARC reclaims the `Data` and the heap page is
-            // overwritten by another allocation - a window
-            // wide enough for a heap-disclosure primitive
-            // (forensic adversary, future Swift bug) to
-            // recover the key. With the wrap key, an attacker
-            // can offline-decrypt `wrap.keychainWrap` to
-            // recover `mainKey`, after which the entire
-            // strongbox is offline-decryptable. See QCW-011.
-            var wrapKey = try KeychainWrapStore.loadOrCreateWrapKey()
-            defer { wrapKey.resetBytes(in: 0..<wrapKey.count) }
-            let wrapEnv = try sealToEnvelope(mainKey, key: wrapKey)
-            // Bump generation so the persisted slot wins on
-            // next read.
-            let newGeneration = decoded.generation + 1
-            try StrongboxFileCodec.writeNewGeneration(
-                generation: newGeneration,
-                kdfSalt: decoded.kdfSalt,
-                kdfParams: decoded.kdfParams,
-                passwordWrap: decoded.passwordWrap,
-                keychainWrap: wrapEnv,
-                strongbox: decoded.strongbox,
-                macKey: macKey,
-                uiBlock: [:],
-                currentSlot: winningSlot)
-            // Bump the anti-rollback counter alongside the
-            // disk write. Storage-before-counter ordering
-            // matches `persistSnapshot`. See QCW-004.
-            try? KeychainGenerationCounter.bump(to: newGeneration)
-        } catch {
-            Logger.debug(category: "STRONGBOX_KEYCHAIN_WRAP_REGEN_FAIL",
-                "regen failed: \(error)")
-        }
-    }
+    // `tryRegenerateKeychainWrap` was deleted along with the
+    // per-device wrap-key infrastructure that
+    // it managed. Rationale lives in the file header above
+    // step 12. If a biometric unlock UI is ever added, design
+    // the storage primitive against
+    // `kSecAttrAccessControl = biometryCurrentSet` so a coerced
+    // enrollment invalidates the wrap, rather than re-introducing
+    // the unconditional Keychain entry that this removal walked
+    // back.
 }

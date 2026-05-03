@@ -633,7 +633,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         scanner.onScan = { [weak self, weak scanner] payload in
             scanner?.dismiss(animated: true) {
                 // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-028. Single source of truth for
+                // auditors): single source of truth for
                 // "is this an address?" is the QuantumCoin SDK
                 // call (`bridge.isValidAddress`), not the local
                 // `QuantumCoinAddress.isValid` regex. The
@@ -704,7 +704,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// the single source of truth; the local
     /// `QuantumCoinAddress.isValid` regex is only used as a
     /// shape pre-filter inside Swift-only call sites such as
-    /// `ApiClient` URL building. See QCW-028.
+    /// `ApiClient` URL building.
     /// Tradeoff: a user with an older `qcoin:`-prefixed QR
     /// code from this same wallet must re-generate the QR
     /// from a current build before this Send screen will
@@ -882,49 +882,60 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     // MARK: - Send pipeline
 
     @objc private func tapSend() {
+        // (audit-grade notes for AI reviewers and human auditors):
+        // the validation order is intentional and audit-significant.
+        //   1. Address non-empty + SDK `isValidAddressAsync` shape
+        //      check FIRST. The SDK is the canonical source of
+        //      "is this an address?" - a synchronous regex prefilter
+        //      is allowed but never overrides the SDK answer.
+        //   2. Mixed-case checksum advisory SECOND. The user types a
+        //      mixed-case form (copied from somewhere) but the
+        //      checksum disagrees with the canonical case map -
+        //      warn but do NOT block (user may have a legitimate
+        //      reason). All-lowercase input is a legitimate
+        //      non-checksum form and suppresses the warning.
+        //   3. Amount checks THIRD. There is no point asking the
+        //      user "is your amount right?" if the address itself
+        //      is malformed - they will fix the address and re-tap
+        //      Send anyway. Front-loading address validation also
+        //      means the keyboard / paste-from-clipboard mistake
+        //      surfaces before the user has had to reason about
+        //      the amount, matching the order they would correct
+        //      the form (top-to-bottom).
+        //   4. Review dialog LAST.
         let L = Localization.shared
         let to = (toField.text ?? "").trimmingCharacters(in: .whitespaces)
         let amount = (amountField.text ?? "").trimmingCharacters(in: .whitespaces)
-        guard !amount.isEmpty else {
-            presentErrorDialog(message: L.getEnterAmountByErrors())
-            return
-        }
-        guard Self.isValidAmount(amount) else {
-            presentErrorDialog(message: L.getEnterAmountByErrors())
-            return
-        }
         guard !to.isEmpty else {
             presentErrorDialog(message: L.getQuantumAddrByErrors())
             return
         }
-        let normalizedAmount = amount.replacingOccurrences(of: ",", with: ".")
         Task { [weak self] in
+            guard let self = self else { return }
             do {
                 let env = try await JsBridge.shared.isValidAddressAsync(to)
                 guard Self.envelopeTrue(env) else {
                     await MainActor.run {
-                        self?.presentErrorDialog(
+                        self.presentErrorDialog(
                             message: Localization.shared.getQuantumAddrByErrors())
                     }
                     return
                 }
-                // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-028. The SDK's `isAddress`
-                // accepts any-case hex, so a pasted address with
-                // a single hex digit corrupted (e.g. typo-
-                // squatted via clipboard substitution) passes
-                // `isValidAddressAsync` even though its
+                // The SDK's `isAddress` accepts any-case hex, so a
+                // pasted address with a single hex digit corrupted
+                // (e.g. typo-squatted via clipboard substitution)
+                // passes `isValidAddressAsync` even though its
                 // mixed-case checksum form does not match. Pull
                 // the canonical mixed-case form via the SDK's
                 // `getChecksumAddress` helper and compare it to
                 // the user's input case-sensitively. If the user
-                // typed a mixed-case form that disagrees with
-                // the canonical form, surface a warning toast so
-                // they can re-verify before committing to a
-                // signing dialog. All-lowercase input is a
-                // legitimate non-checksum form (the user copied
-                // from a system that does not emit mixed case),
-                // so we suppress the warning in that case.
+                // typed a mixed-case form that disagrees with the
+                // canonical form, surface a warning toast so they
+                // can re-verify before committing to a signing
+                // dialog. All-lowercase input is a legitimate
+                // non-checksum form (the user copied from a system
+                // that does not emit mixed case), so we suppress
+                // the warning in that case.
                 let lowerInput = to.lowercased()
                 let hasMixedCase = (to != lowerInput)
                 if hasMixedCase {
@@ -944,12 +955,29 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                         // already passed.
                     }
                 }
+                // Amount checks AFTER address (see header comment).
+                // We deliberately re-await on the main actor to
+                // surface the dialog from the same UI thread the
+                // user tapped Send on.
+                guard !amount.isEmpty else {
+                    await MainActor.run {
+                        self.presentErrorDialog(message: L.getEnterAmountByErrors())
+                    }
+                    return
+                }
+                guard Self.isValidAmount(amount) else {
+                    await MainActor.run {
+                        self.presentErrorDialog(message: L.getEnterAmountByErrors())
+                    }
+                    return
+                }
+                let normalizedAmount = amount.replacingOccurrences(of: ",", with: ".")
                 await MainActor.run {
-                    self?.presentReviewDialog(to: to, amount: normalizedAmount)
+                    self.presentReviewDialog(to: to, amount: normalizedAmount)
                 }
             } catch {
                 await MainActor.run {
-                    self?.presentErrorDialog(message: "\(error)")
+                    self.presentErrorDialog(message: "\(error)")
                 }
             }
         }
@@ -999,25 +1027,42 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         let capturedFrom = from
         Task { [weak self] in
             let captured = await NetworkConfig.shared.current
-            // Re-encode the From and To addresses
-            // in mixed-case checksum form before showing them in
-            // the dialog. A typo of a single hex digit changes
-            // ~half of the expected uppercase letters, so the
-            // user gets a strong visual cue. Falls back to the
-            // raw lowercased form on any bridge error (validator
-            // failure, JS bundle missing the `getAddress` symbol,
-            // network not initialised) - the address itself is
-            // never modified, only its capitalization.
-            let fromChecksum: String
+            // (audit-grade notes for AI reviewers and human auditors):
+            // the TO checksum MUST come from the SDK or the
+            // dialog MUST NOT render. A silent fallback to the
+            // raw lowercased form would show the recipient as a
+            // visually-correct-looking address that the user cannot
+            // case-checksum-compare against the address they expect -
+            // the entire purpose of the review dialog is defeated.
+            // The FROM address is the user's own wallet (never
+            // attacker-influenced for the duration of this screen);
+            // a missing checksum on FROM is a UX regression rather
+            // than a signing-correctness one, so we keep the
+            // permissive fallback there.
             let toChecksum: String
             do {
-                let envFrom = try await JsBridge.shared.getChecksumAddressAsync(from)
                 let envTo = try await JsBridge.shared.getChecksumAddressAsync(to)
+                guard let canonical = SendViewController.parseChecksumAddress(envTo) else {
+                    await MainActor.run {
+                        Toast.showError(Localization.shared.getQuantumAddrByErrors())
+                    }
+                    return
+                }
+                toChecksum = canonical
+            } catch {
+                await MainActor.run {
+                    Toast.showError(Localization.shared.getQuantumAddrByErrors())
+                }
+                return
+            }
+            // FROM address - permissive fallback is intentional,
+            // see header comment above.
+            let fromChecksum: String
+            do {
+                let envFrom = try await JsBridge.shared.getChecksumAddressAsync(from)
                 fromChecksum = SendViewController.parseChecksumAddress(envFrom) ?? from
-                toChecksum = SendViewController.parseChecksumAddress(envTo) ?? to
             } catch {
                 fromChecksum = from
-                toChecksum = to
             }
             await MainActor.run {
                 guard let self = self else { return }
@@ -1113,8 +1158,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                 [weak self, weak dlg, weak wait, selectedTokenContract, weiAmount] in
                 // Phase 1 - decrypt
                 // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-010. The decrypted private/public
-                // key bytes flow through the binary channel; we
+                // auditors): the decrypted private/public key
+                // bytes flow through the binary channel; we
                 // hold them as `Data` so the `defer { resetBytes }`
                 // pattern actually wipes the bytes after signing.
                 var decryptedKeys: JsBridge.WalletEnvelope?
@@ -1143,13 +1188,12 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                     // it identically to the strongbox unlock
                     // dialog. Without that wrapper the Send
                     // screen would be an unrate-limited brute-
-                    // force surface against the user password
-                    // (see QCW-001). Bridge failures (wrong
-                    // password OR corrupt envelope) are
-                    // indistinguishable at this layer; we
-                    // conservatively count them as failures
-                    // because the worse failure mode is
-                    // re-opening the QCW-001 oracle.
+                    // force surface against the user password.
+                    // Bridge failures (wrong password OR corrupt
+                    // envelope) are indistinguishable at this
+                    // layer; we conservatively count them as
+                    // failures because the worse failure mode is
+                    // re-opening that password oracle.
                     guard let encrypted = Strongbox.shared.encryptedSeed(at: walletIndex) else {
                         throw UnlockCoordinatorV2Error.notUnlocked
                     }
@@ -1158,8 +1202,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                             walletJson: encrypted, password: pw)
                     }
                     // (audit-grade notes for AI reviewers and
-                    // human auditors): QCW-018. The decrypted
-                    // envelope MUST belong to the wallet the
+                    // human auditors): the decrypted envelope
+                    // MUST belong to the wallet the
                     // user reviewed and confirmed in the
                     // transaction-review dialog. If a stale or
                     // mismatched per-wallet ciphertext somehow

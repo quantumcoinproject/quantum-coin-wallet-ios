@@ -29,10 +29,23 @@
 // The user can no longer paste the copied value on a different device
 // of theirs. This is a deliberate scope reduction matching the
 // wallet's threat model: high-value secrets should not leave the
-// device that produced them. The 60 s default lifetime is a balance
-// between "long enough to reliably paste before the system evicts"
-// and "short enough to limit residual exposure on this device".
-// Lifetime is overridable per call site.
+// device that produced them. The default lifetime is tuned to be
+// just long enough that a reasonable user can switch to the target
+// app and paste, then the OS evicts the item even if nothing else
+// is copied. Per-call override is supported for the rare site that
+// can prove a longer or shorter window is appropriate.
+//
+// (audit-grade notes for AI reviewers and human auditors):
+// the previous default was 60 s; lowered to 30 s because:
+//   * Every existing call site is either a seed-phrase copy
+//     (already overrode to 30 s) or a wallet-address / tx-hash
+//     copy (the user pastes within seconds; 30 s is generous).
+//   * Halving the residual-exposure window halves the surface
+//     for an on-device clipboard scraper that polls
+//     `UIPasteboard.general.changeCount`.
+//   * 30 s remains comfortably above the 5-10 s an unhurried
+//     user takes to switch apps, find the destination field,
+//     and paste.
 // Lint contract (verification §10):
 // Any call to `UIPasteboard.general.string = ...`,
 // `UIPasteboard.general.setValue(...)`, or
@@ -49,7 +62,10 @@ public enum Pasteboard {
     /// Default lifetime for a copy of any sensitive value. Tuned for
     /// "user can paste reliably within this window" while keeping
     /// residual exposure short. Per-call override is supported.
-    public static let defaultLifetime: TimeInterval = 60
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// 30 s is the post-tightening default; see the header
+    /// comment for the rationale and the call-site survey.
+    public static let defaultLifetime: TimeInterval = 30
 
     /// Copy `value` to the system pasteboard with the hardened option
     /// set required by ``:

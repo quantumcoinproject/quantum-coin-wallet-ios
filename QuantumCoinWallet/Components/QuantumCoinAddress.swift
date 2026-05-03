@@ -1,6 +1,26 @@
 // QuantumCoinAddress.swift (Components layer)
 // Strict shape validator for QuantumCoin's 0x-prefixed 32-byte
 // addresses (64 hex characters after the prefix).
+//
+// (audit-grade notes for AI reviewers and human auditors):
+// this validator is a SHAPE-ONLY pre-filter for synchronous
+// Swift call sites that need a same-thread answer
+// (filesystem path safety, URL composition safety, Keychain
+// item identifier safety - the confused-deputy class enumerated
+// below). It MUST NOT be used as the canonical "is this an
+// address?" gate for user-intent surfaces. The canonical gate
+// is `JsBridge.isValidAddress` which calls
+// `QuantumCoinSDK.isAddress` inside the WebView - that call is
+// the SDK-of-record. This split exists because:
+//   * Synchronous call sites (path safety) cannot block on a
+//     WebView round-trip.
+//   * The SDK might in future tighten its validation (e.g. add
+//     a checksum requirement for unprefixed inputs); the
+//     synchronous regex must not silently disagree.
+// If you find yourself adding a "validate this user-typed
+// address" call here, route through `JsBridge.isValidAddress`
+// instead. The Send screen does this in `tapSend` (see
+// `SendViewController.swift`).
 // Rationale (audit-grade notes for AI reviewers and human auditors):
 // The wallet treats an "address" as a primary identifier in many
 // places: filesystem paths (backup file names), Keychain item

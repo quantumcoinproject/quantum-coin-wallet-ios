@@ -53,7 +53,7 @@ public final class JsEngine: NSObject {
     private let pendingCallbacks = PendingCallbackStore()
     private let pendingPayloads = PendingPayloadStore()
     /// (audit-grade notes for AI reviewers and human auditors):
-    /// QCW-010. Two symmetric binary channels staging arbitrary
+    /// two symmetric binary channels staging arbitrary
     /// `Data` between Swift and the JS bridge:
     /// * `pendingBinaryOutbound` is filled by Swift via
     ///   `storePendingPayloadBinary` and consumed by JS via the
@@ -67,7 +67,7 @@ public final class JsEngine: NSObject {
     ///   returns raw bytes (e.g. just-decrypted private key) back
     ///   to Swift without ever stringifying them.
     /// Both stores are token-checked single-use, identical security
-    /// posture to `pendingPayloads` (see QCW-031).
+    /// posture to `pendingPayloads`.
     private let pendingBinaryOutbound = PendingBinaryStore()
     private let pendingBinaryInbound = PendingBinaryStore()
     private let ready = AtomicBool()
@@ -166,7 +166,7 @@ public final class JsEngine: NSObject {
     /// capability token, stores it alongside the payload, AND
     /// injects the token into the WebView's `window.__bridgeTokens`
     /// map so the JS-side `getPendingPayload` shim can present it
-    /// in the XHR URL. See QCW-031 / `PendingPayloadStore`.
+    /// in the XHR URL. See `PendingPayloadStore`.
     nonisolated public func storePendingPayload(requestId: String, json: String) throws {
         let token = try pendingPayloads.put(requestId: requestId, json: json)
         injectBridgeToken(requestId: requestId, token: token)
@@ -189,7 +189,7 @@ public final class JsEngine: NSObject {
     /// injected into `window.__bridgeBinaryTokens[requestId][key]`
     /// so the JS-side `pullPayloadBinary` shim can present it.
     /// Single-use: the JS XHR consumes the entry on first read,
-    /// and a replay returns 404. See QCW-010.
+    /// and a replay returns 404.
     nonisolated public func storePendingPayloadBinary(
         requestId: String, key: String, data: Data) throws {
         let token = try pendingBinaryOutbound.put(
@@ -365,7 +365,7 @@ public final class JsEngine: NSObject {
                 },
                 getPendingPayload: function (requestId) {
                     // Synchronous pull via XHR against the custom scheme.
-                    // QCW-031: the URL must include the per-request
+                    // The URL must include the per-request
                     // capability token that Swift injected into
                     // `window.__bridgeTokens[requestId]` when staging
                     // the payload. Without the token the SchemeHandler
@@ -449,7 +449,7 @@ public final class JsEngine: NSObject {
     /// `WKURLSchemeHandler` does not reliably surface POST
     /// bodies to custom-scheme handlers; the message-handler
     /// path is the documented IPC channel for JS -> native
-    /// payloads. See QCW-010.
+    /// payloads.
     fileprivate func pushBinaryFromMessage(requestId: String, key: String,
         token: String, data: Data) -> Bool {
         return pendingBinaryInbound.completeReservation(
@@ -484,7 +484,7 @@ extension JsEngine: WKNavigationDelegate {
         withError error: Error) {
         // (audit-grade notes for AI reviewers and human
         // auditors): the URL is intentionally NOT included in
-        // the surfaced message (see QCW-025). The full
+        // the surfaced message. The full
         // `appassets:///bridge.html` path leaks the WKWebView
         // scheme handler shape into a user-facing splash error,
         // which gives an attacker the exact internal namespace
@@ -541,7 +541,7 @@ private final class ScriptMessageBroker: NSObject, WKScriptMessageHandler {
         else { return }
         guard let owner = owner else { return }
         // (audit-grade notes for AI reviewers and human
-        // auditors): QCW-010. The `pushBinary` route accepts a
+        // auditors): the `pushBinary` route accepts a
         // mixed-type args array (`[String, String, String, [NSNumber]]`)
         // because the JS side passes a numeric array as the
         // last element. The other routes (`onResult`,
@@ -653,7 +653,7 @@ private final class AppAssetsSchemeHandler: NSObject, WKURLSchemeHandler {
             return
         }
 
-        // QCW-010 binary channels.
+        // Binary channels.
         if url.path.hasPrefix("/bridge-binary-pull/") {
             // Outbound (Swift -> JS) binary fetch. URL shape:
             // appassets:///bridge-binary-pull/<rid>/<key>/<token>
@@ -713,7 +713,7 @@ private final class AppAssetsSchemeHandler: NSObject, WKURLSchemeHandler {
             // JS-side pull of a staged payload. URL shape:
             // appassets:///bridge-payload/<requestId>/<token>
             // (audit-grade notes for AI reviewers and human
-            // auditors): QCW-031. The previous URL shape was
+            // auditors): the previous URL shape was
             // `appassets:///bridge-payload/<requestId>` with no
             // capability check, relying on WebKit's CORS
             // enforcement for the custom scheme to keep
@@ -931,8 +931,8 @@ private final class PendingCallbackStore: @unchecked Sendable {
 /// (32 random bytes, hex-encoded) generated at staging time. The
 /// JS-side `appassets:///bridge-payload/<rid>/<token>` XHR must
 /// present the matching token, otherwise the SchemeHandler returns
-/// `.fileDoesNotExist`. This is QCW-031: WebKit's CORS enforcement
-/// for custom schemes is not formally specified, so we cannot rely
+/// `.fileDoesNotExist`. WebKit's CORS enforcement for custom
+/// schemes is not formally specified, so we cannot rely
 /// on `Access-Control-Allow-Origin` alone to keep an unrelated
 /// document (or a future bug that loads a non-bridge document into
 /// the same WebView) from reading the staged payloads. The
@@ -961,7 +961,7 @@ private final class PendingPayloadStore: @unchecked Sendable {
         if map.count >= Self.maxEntries {
             throw JsEngineError.pendingPayloadMapFull
         }
-        let token = Self.generateToken()
+        let token = try Self.generateToken()
         map[requestId] = Entry(
             json: json, token: token, enqueuedAt: Self.now())
         return token
@@ -1003,12 +1003,27 @@ private final class PendingPayloadStore: @unchecked Sendable {
 
     /// 32 random bytes hex-encoded. The capability token is opaque
     /// to JS; only the SchemeHandler ever inspects it.
-    private static func generateToken() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        precondition(status == errSecSuccess,
-            "SecRandomCopyBytes failed for bridge capability token")
-        return bytes.map { String(format: "%02x", $0) }.joined()
+    /// (audit-grade notes for AI reviewers and human auditors): the
+    /// token is the gate that prevents a same-origin JS error from
+    /// pulling a different request's payload off the staging map.
+    /// We MUST refuse to issue a token if the OS RNG fails - the
+    /// previous implementation `precondition(status == errSecSuccess)`
+    /// crashed the entire app, which is "the safest possible default"
+    /// in spirit but in practice nukes any in-flight unlock dialog,
+    /// any partially-typed seed phrase, etc. Routing through
+    /// `SecureRandom.bytes(32)` lets the call site bubble the failure
+    /// up as `JsEngineError.tokenGenerationFailed(OSStatus)`, which
+    /// the SchemeHandler maps to a fail-closed bridge response (the
+    /// pending entry is never staged so no payload can leak).
+    private static func generateToken() throws -> String {
+        do {
+            let bytes = try SecureRandom.bytes(32)
+            return bytes.map { String(format: "%02x", $0) }.joined()
+        } catch let SecureRandom.Error.osStatus(status) {
+            throw JsEngineError.tokenGenerationFailed(status)
+        } catch {
+            throw JsEngineError.tokenGenerationFailed(errSecInternalError)
+        }
     }
 
     /// Constant-time string-equals over the raw UTF-8 bytes. The
@@ -1032,6 +1047,12 @@ public enum JsEngineError: Error, CustomStringConvertible {
     case bridgeNotReady
     case timeout
     case callFailed(String)
+    /// The OS RNG (`SecRandomCopyBytes`) refused to produce a
+    /// capability token. Callers MUST treat this as a fail-closed
+    /// bridge call - no entry is staged, so no payload can be
+    /// pulled. The raw `OSStatus` is preserved for forensic
+    /// triage. See `PendingPayloadStore.generateToken()`.
+    case tokenGenerationFailed(OSStatus)
 
     public var description: String {
         switch self {
@@ -1040,6 +1061,7 @@ public enum JsEngineError: Error, CustomStringConvertible {
             case .bridgeNotReady: return "Bridge WebView did not become ready in time"
             case .timeout: return "Bridge call timed out"
             case .callFailed(let m): return "Bridge call failed: \(m)"
+            case .tokenGenerationFailed(let s): return "OS RNG failed to mint bridge capability token (OSStatus=\(s))"
         }
     }
 }
@@ -1057,7 +1079,7 @@ public enum JsEngineError: Error, CustomStringConvertible {
 /// zeroized in place. This store keeps the raw bytes in `Data` (Swift)
 /// and `Uint8Array` (JS) end-to-end, so callers can call
 /// `Data.resetBytes(in:)` / `Uint8Array.fill(0)` to wipe the buffer
-/// the moment the byte-consuming operation completes. See QCW-010.
+/// the moment the byte-consuming operation completes.
 private final class PendingBinaryStore: @unchecked Sendable {
     private struct Entry {
         var data: Data?            // nil means "reserved, not yet pushed"
@@ -1084,7 +1106,7 @@ private final class PendingBinaryStore: @unchecked Sendable {
         if map.count >= Self.maxEntries {
             throw JsEngineError.pendingBinaryMapFull
         }
-        let token = Self.generateToken()
+        let token = try Self.generateToken()
         map[Slot(requestId: requestId, key: key)] = Entry(
             data: data, token: token, enqueuedAt: Self.now())
         return token
@@ -1101,7 +1123,7 @@ private final class PendingBinaryStore: @unchecked Sendable {
         if map.count >= Self.maxEntries {
             throw JsEngineError.pendingBinaryMapFull
         }
-        let token = Self.generateToken()
+        let token = try Self.generateToken()
         map[Slot(requestId: requestId, key: key)] = Entry(
             data: nil, token: token, enqueuedAt: Self.now())
         return token
@@ -1164,12 +1186,18 @@ private final class PendingBinaryStore: @unchecked Sendable {
 
     private static func now() -> TimeInterval { CFAbsoluteTimeGetCurrent() }
 
-    private static func generateToken() -> String {
-        var bytes = [UInt8](repeating: 0, count: 32)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        precondition(status == errSecSuccess,
-            "SecRandomCopyBytes failed for binary capability token")
-        return bytes.map { String(format: "%02x", $0) }.joined()
+    /// 32 random bytes hex-encoded. Same posture as
+    /// `PendingPayloadStore.generateToken`; see that helper's
+    /// comment block for the full rationale.
+    private static func generateToken() throws -> String {
+        do {
+            let bytes = try SecureRandom.bytes(32)
+            return bytes.map { String(format: "%02x", $0) }.joined()
+        } catch let SecureRandom.Error.osStatus(status) {
+            throw JsEngineError.tokenGenerationFailed(status)
+        } catch {
+            throw JsEngineError.tokenGenerationFailed(errSecInternalError)
+        }
     }
 
     private static func constantTimeEquals(_ a: String, _ b: String) -> Bool {

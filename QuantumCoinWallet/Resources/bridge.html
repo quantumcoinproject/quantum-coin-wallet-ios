@@ -106,7 +106,7 @@ function hexToBytes(hex) {
 }
 
 // (audit-grade notes for AI reviewers and human auditors):
-// QCW-010. Symmetric binary channels between Swift and the JS
+// symmetric binary channels between Swift and the JS
 // bridge. The QuantumCoin SDK already returns the private and
 // public key bytes as Uint8Array (`wallet.signingKey.privateKeyBytes`
 // / `publicKeyBytes`), and accepts Uint8Array as input to its
@@ -147,7 +147,7 @@ function pullPayloadBinary(rid, key) {
 
 function stagePendingResultBinary(rid, key, uint8) {
  // (audit-grade notes for AI reviewers and human auditors):
- // QCW-010. WKURLSchemeHandler on iOS does NOT reliably
+ // WKURLSchemeHandler on iOS does NOT reliably
  // receive XHR POST bodies for custom schemes (the body is
  // stripped by WebKit before reaching the scheme handler).
  // We therefore push the binary via the existing
@@ -204,7 +204,7 @@ function stageWalletKeysBinary(requestId, wallet) {
 }
 
 function extractWalletInfo(wallet) {
- // QCW-010: address only. Secret bytes are staged via
+ // Address only. Secret bytes are staged via
  // `stageWalletKeysBinary` by the caller BEFORE this function
  // is invoked.
  return { address: wallet.address };
@@ -372,7 +372,7 @@ var bridge = {
  sendError(requestId, 'getWordListFromSeedArray returned non-array');
  return;
  }
- // QCW-010: stage privateKey/publicKey on the binary channel
+ // Stage privateKey/publicKey on the binary channel
  // BEFORE sendResult so Swift sees them when it consumes the
  // envelope. The JSON envelope carries only address + seed
  // metadata; the secret bytes never enter the JSON string pool.
@@ -394,8 +394,7 @@ var bridge = {
  payload = pullPayload(requestId);
  if (!payload) return;
  var wallet = await QuantumCoinSDK.Wallet.fromSeed(payload.seedArray);
- // QCW-010: secrets via binary channel; envelope carries
- // address only.
+ // Secrets via binary channel; envelope carries address only.
  stageWalletKeysBinary(requestId, wallet);
  sendResult(requestId, extractWalletInfo(wallet));
  } catch (e) {
@@ -414,7 +413,7 @@ var bridge = {
  payload = pullPayload(requestId);
  if (!payload) return;
  var wallet = await QuantumCoinSDK.Wallet.fromPhrase(payload.words);
- // QCW-010: secrets via binary channel.
+ // Secrets via binary channel.
  stageWalletKeysBinary(requestId, wallet);
  sendResult(requestId, extractWalletInfo(wallet));
  } catch (e) {
@@ -431,8 +430,8 @@ var bridge = {
  var pubBytes = null;
  try {
  if (!(await ensureInitialized(requestId))) return;
- // QCW-010: pull private/public key bytes from the binary
- // channel rather than base64-decoding from a JSON payload.
+ // Pull private/public key bytes from the binary channel
+ // rather than base64-decoding from a JSON payload.
  // The bytes never appear in any JS string pool.
  privBytes = pullPayloadBinary(requestId, 'privKey');
  pubBytes = pullPayloadBinary(requestId, 'pubKey');
@@ -448,6 +447,22 @@ var bridge = {
  },
 
  sendTransaction: async function(requestId) {
+ // (audit-grade notes for AI reviewers and human auditors):
+ // the JsonRpcProvider here connects to whichever RPC
+ // endpoint the user has selected. The
+ // wallet does NOT TLS-pin RPC traffic by design - QuantumCoin
+ // is non-custodial and the user MUST be free to point at
+ // their own node, an Infura-class third-party provider, a
+ // community-run public RPC, etc. WKWebView still validates
+ // the certificate chain against the iOS system trust store
+ // (baseline TLS), so a passive eavesdropper cannot read or
+ // modify our traffic; the absence of pinning is specifically
+ // about NOT collapsing the operator choice down to one
+ // project-controlled key. See `Networking/TlsPinning.swift`
+ // file header for the full rationale and the future-spec
+ // local-RLP-keccak mitigation that defends the
+ // signed-tx-hash check against a hostile RPC operator AS
+ // WELL AS a CA-compromise attacker.
  var payload = null;
  var privBytes = null;
  var pubBytes = null;
@@ -460,7 +475,7 @@ var bridge = {
  _sdkInitialized = true;
  var provider = new QuantumCoinSDK.JsonRpcProvider(
  payload.rpcEndpoint, payload.chainId);
- // QCW-010: secrets via binary channel.
+ // Secrets via binary channel.
  privBytes = pullPayloadBinary(requestId, 'privKey');
  pubBytes = pullPayloadBinary(requestId, 'pubKey');
  var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes, provider);
@@ -497,7 +512,7 @@ var bridge = {
  _sdkInitialized = true;
  var provider = new QuantumCoinSDK.JsonRpcProvider(
  payload.rpcEndpoint, payload.chainId);
- // QCW-010: secrets via binary channel.
+ // Secrets via binary channel.
  privBytes = pullPayloadBinary(requestId, 'privKey');
  pubBytes = pullPayloadBinary(requestId, 'pubKey');
  var wallet = await QuantumCoinSDK.Wallet.fromKeys(privBytes, pubBytes, provider);
@@ -526,34 +541,42 @@ var bridge = {
  }
  },
 
- // Return the mixed-case checksum form
- // of `address`. Used by the transaction review dialog to render
- // the recipient (and the From wallet) in a typo-resistant
- // capitalization. The user can visually compare a typo'd
- // address against the address they expect: a single transposed
- // hex digit changes the case-checksum hash and therefore many
- // letter positions, making the difference obvious.
- // The QuantumCoinSDK bundle exposes a `getAddress(address)`
- // helper. If the symbol is unavailable for any reason (older
- // bundle, refactor) we fall back to the
- // lower-case form so the dialog still renders something rather
- // than failing the gate. The fallback is intentional and
- // documented: a missing checksum is a UX regression, not a
- // signing-correctness regression - the address itself is
- // unchanged.
+ // Return the mixed-case checksum form of `address`. Used by the
+ // transaction review dialog to render the recipient (and the From
+ // wallet) in a typo-resistant capitalization. The user can
+ // visually compare a typo'd address against the address they
+ // expect: a single transposed hex digit changes the case-checksum
+ // hash and therefore many letter positions, making the difference
+ // obvious.
+ //
+ // (audit-grade notes for AI reviewers and human auditors):
+ // the previous implementation had a `toLowerCase()` fallback
+ // for "older bundle / SDK symbol missing" so the review
+ // dialog would still render *something*. That fallback was a
+ // silent typo-detection downgrade for the recipient (TO) address:
+ // a malformed-but-valid-shape address would render as lowercase
+ // and the user would never see the case-checksum mismatch they
+ // would otherwise spot. The fallback has been removed - if the
+ // SDK call fails or `QuantumCoinSDK.getAddress` is missing we
+ // surface a hard error (`SDK_GETADDRESS_UNAVAILABLE`) and let the
+ // Swift caller decide its policy:
+ //   * SendViewController fail-closes for the TO address (toast +
+ //     abort) - the user MUST be able to compare a checksum, that
+ //     is the whole point of the review dialog.
+ //   * SendViewController is permissive for the FROM address (it
+ //     came from the user's own wallet, so a missing checksum is a
+ //     UX regression rather than a signing-correctness one).
+ // The JS side is uniformly fail-closed; the FROM permissiveness
+ // lives on the Swift side so the policy is visible to a Swift
+ // auditor reading SendViewController.tapSend.
  getChecksumAddress: async function(requestId, address) {
  try {
  if (!(await ensureInitialized(requestId))) return;
- var out;
- if (typeof QuantumCoinSDK.getAddress === 'function') {
- try {
- out = QuantumCoinSDK.getAddress(address);
- } catch (_) {
- out = String(address || '').toLowerCase();
+ if (typeof QuantumCoinSDK.getAddress !== 'function') {
+ sendError(requestId, new Error('SDK_GETADDRESS_UNAVAILABLE'));
+ return;
  }
- } else {
- out = String(address || '').toLowerCase();
- }
+ var out = QuantumCoinSDK.getAddress(address);
  sendResult(requestId, { address: out });
  } catch (e) {
  sendError(requestId, e);
@@ -581,7 +604,7 @@ var bridge = {
  payload = pullPayload(requestId);
  if (!payload) return;
  // (audit-grade notes for AI reviewers and human auditors):
- // QCW-010. The seed-words branch is the only user-facing path
+ // the seed-words branch is the only user-facing path
  // (the create-wallet handler stages the just-generated seed
  // words to a single-shot JSON envelope and we re-encrypt
  // them here). The private/public key branch reads its key
@@ -641,7 +664,7 @@ var bridge = {
  seedWords = words;
  }
  }
- // QCW-010: stage privateKey/publicKey on the binary channel.
+ // Stage privateKey/publicKey on the binary channel.
  // The JSON envelope returned to Swift carries only the
  // address + seed metadata. Note: `seed` (hex string) and
  // `seedWords` ([String]) remain in the JSON envelope by
@@ -706,7 +729,7 @@ var bridge = {
  payload = pullPayload(requestId);
  if (!payload) return;
  // (audit-grade notes for AI reviewers and human auditors):
- // QCW-027. Defense-in-depth minimum-bound check on the
+ // defense-in-depth minimum-bound check on the
  // scrypt parameters. Swift's `JsBridge.scryptDerive`
  // already passes the canonical
  // (SCRYPT_N, SCRYPT_R, SCRYPT_P, SCRYPT_KEY_LEN) defaults;

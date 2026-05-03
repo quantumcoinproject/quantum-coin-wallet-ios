@@ -422,7 +422,7 @@ public final class CloudBackupManager: NSObject {
         // auditors): the original was
         // `let ok = url.startAccessingSecurityScopedResource`
         // which captures the *method reference* WITHOUT
-        // invoking it (see QCW-008). The defer then called
+        // invoking it. The defer then called
         // `ok()`, meaning the resource was started in the
         // defer (right before stop) and never actually
         // accessed during the bookmark read. iCloud / external

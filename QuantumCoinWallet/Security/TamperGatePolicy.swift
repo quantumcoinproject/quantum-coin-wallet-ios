@@ -26,8 +26,8 @@
 // tamper -> HARD FAIL (per-launch dialog; user can ONLY
 // Quit; signing is non-overridable)
 // (audit-grade notes for AI reviewers and human auditors):
-// the asymmetry was tightened in QCW-007. Jailbreak detection
-// still uses an informed-consent dialog with a sticky bit -
+// jailbreak detection uses an informed-consent dialog with a
+// sticky bit -
 // jailbreak signals are heuristic and a single false positive
 // must not brick a legitimately-jailbroken-by-the-user device.
 // Debugger and runtime-tamper detections are HARD signals with
@@ -58,9 +58,9 @@
 // resets the consent and re-shows the dialog, which is the
 // correct trade-off: a fresh install has not seen the
 // disclosure, so it should see it.
-// * The hard-fail dialog has NO "Ignore and resume" affordance
-// since QCW-007. The previous design persisted no override
-// state but the in-process flag was enough to silence
+// * The hard-fail dialog has NO "Ignore and resume" affordance.
+// An earlier design exposed that affordance and persisted no
+// override state, but an in-process flag was enough to silence
 // `assertSafeToSign` for the rest of the session - which
 // defeated the per-call re-evaluation.
 // Tradeoffs:
@@ -69,8 +69,8 @@
 // slightly on a tamper-detected device; acceptable because
 // the user explicitly accepted that trade-off when they
 // tapped "Continue at my own risk" or "Ignore and resume".
-// - The hard-fail dialog is now Quit-only (QCW-007). A power
-// user who genuinely wants to debug a Release build can
+// - The hard-fail dialog is Quit-only. A power user who
+// genuinely wants to debug a Release build can
 // rebuild from source with `kTamperGateEnabled = false`.
 // The legitimate-jailbreak case still has the informed-
 // consent path because jailbreak signals are heuristic
@@ -143,8 +143,8 @@ public final class TamperGatePolicy: @unchecked Sendable {
     /// `assertSafeToSign` so a signing attempt fired between the
     /// hard-fail dialog and the `exit(0)` is still blocked.
     /// (audit-grade notes for AI reviewers and human auditors):
-    /// since QCW-007 there is no "Ignore and resume" action that
-    /// could clear this flag. The flag remains set for the
+    /// there is no "Ignore and resume" action that could clear
+    /// this flag. The flag remains set for the
     /// remainder of the process lifetime, even after the
     /// terminate-after-dialog timer fires, so a stray signing
     /// call in the gap before `exit(0)` is still blocked.
@@ -317,9 +317,9 @@ public final class TamperGatePolicy: @unchecked Sendable {
         guard Self.kTamperGateEnabled else { return }
 
         // (audit-grade notes for AI reviewers and human
-        // auditors): the hard-fail signals are non-overridable
-        // since QCW-007. There is no "Ignore and resume" affordance
-        // that could clear `hardFailReason`; the only ways out
+        // auditors): the hard-fail signals are non-overridable.
+        // There is no "Ignore and resume" affordance that could
+        // clear `hardFailReason`; the only ways out
         // of a hard-fail state are (a) the user taps Quit and the
         // process terminates, or (b) the user re-launches a
         // shipping Release build with the underlying probe no
@@ -353,8 +353,9 @@ public final class TamperGatePolicy: @unchecked Sendable {
             // A debugger was just attached (post-launch). Refuse
             // to sign. We do NOT `exit(0)` here because we are
             // on a background thread - safer to throw and let the
-            // UI surface the error. The user can re-launch and
-            // tap "Ignore and resume" if they want to continue.
+            // UI surface the error. There is no in-process bypass:
+            // a user who wants to continue must re-launch the app
+            // and re-enter whichever consent dialog applies.
             throw TamperGateError.debuggerAttached
 
             case .runtimeTamperDetected:
@@ -403,8 +404,8 @@ public final class TamperGatePolicy: @unchecked Sendable {
     /// dismissal animation completes.
     /// (audit-grade notes for AI reviewers and human auditors):
     /// the dialog used to also offer "Ignore and resume" but
-    /// that affordance was removed in QCW-007. A per-launch
-    /// override is the only path that could let an opportunistic
+    /// that affordance was removed. A per-launch override is
+    /// the only path that could let an opportunistic
     /// attacker dismiss the warning once and proceed; with no
     /// such affordance, the user's only safe outcome is to Quit.
     /// A power user who genuinely wants to debug a Release build
@@ -464,7 +465,7 @@ public final class TamperGatePolicy: @unchecked Sendable {
     /// Idempotent banner installer. Tagged so a second install
     /// is a no-op. Used today only by the jailbreak path
     /// (the hard-fail dialogs no longer install a banner because
-    /// they always Quit; see QCW-007).
+    /// they always Quit).
     @MainActor
     private func installBanner(in window: UIWindow?, text: String) {
         guard let window = window else { return }

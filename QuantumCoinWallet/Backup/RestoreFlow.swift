@@ -163,7 +163,9 @@ public final class RestoreFlow {
     /// We coordinate every read through `NSFileCoordinator` so
     /// these reads succeed on first try.
     /// * Bad JSON / missing `address` / address fails the
-    /// `^0x[0-9a-fA-F]{40}$` shape check:
+    /// `^0x[0-9a-fA-F]{64}$` shape check (32-byte QuantumCoin
+    /// addresses; the previous `{40}` figure was a stale carry-over
+    /// from a 20-byte scheme):
     /// each surfaced with its own message so a user who picked
     /// a non-`.wallet` file by accident knows to re-pick.
     private enum CandidateLoadResult {
@@ -173,7 +175,7 @@ public final class RestoreFlow {
 
     private func loadCandidateDetailed(from url: URL) -> CandidateLoadResult {
         // (audit-grade notes for AI reviewers and human
-        // auditors): see QCW-008. The original
+        // auditors): the original
         // `let ok = url.startAccessingSecurityScopedResource`
         // captures the method reference WITHOUT invoking it,
         // and the defer's `ok()` then started the resource
@@ -256,7 +258,7 @@ public final class RestoreFlow {
             return .failure("File is not valid UTF-8 text.")
         }
         // `extractAddress` runs the strict regex
-        // (`^0x[0-9a-fA-F]{40}$`) and returns nil on shape failure,
+        // (`^0x[0-9a-fA-F]{64}$`) and returns nil on shape failure,
         // so any address that survives is safe to use as a filesystem
         // path component. Identity-binding (does the recovered key
         // really derive this address?) is enforced separately in
@@ -398,7 +400,7 @@ public final class RestoreFlow {
             // password) would fail with `authenticationFailed` on
             // the inner layer.
             // (audit-grade notes for AI reviewers and human
-            // auditors): QCW-010. The decrypted envelope holds the
+            // auditors): the decrypted envelope holds the
             // private/public key bytes as `Data`; we do NOT use
             // them on this path (we re-encrypt below using
             // `seedWords` as the input shape, which is the

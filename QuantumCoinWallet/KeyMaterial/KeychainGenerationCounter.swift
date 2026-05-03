@@ -1,6 +1,6 @@
 // KeychainGenerationCounter.swift (KeyMaterial layer)
 // Per-device monotonic anti-rollback counter for the strongbox
-// slot-file generation. Closes QCW-004.
+// slot-file generation.
 // Why this exists (audit-grade notes for AI reviewers and human
 // auditors):
 // The strongbox file-level MAC covers `{v, generation, kdf,

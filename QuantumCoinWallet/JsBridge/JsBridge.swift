@@ -17,8 +17,8 @@
 // queue. Calling from the main thread will trap with
 // `preconditionFailure`. Use the async wrappers from UI code.
 //
-// (audit-grade notes for AI reviewers and human auditors): QCW-010.
-// The wallet-creation, wallet-decrypt, and signing call shapes use
+// (audit-grade notes for AI reviewers and human auditors):
+// the wallet-creation, wallet-decrypt, and signing call shapes use
 // the binary channel `JsEngine.storePendingPayloadBinary` /
 // `consumePendingResultBinary` for `privateKeyBytes` and
 // `publicKeyBytes`. The Swift facades take and return `Data` for
@@ -171,7 +171,7 @@ public final class JsBridge: @unchecked Sendable {
         // full policy and tradeoff write-up.
         try TamperGatePolicy.shared.assertSafeToSign()
         return try blockingCall { cb, rid in
-            // QCW-010: stage the secret bytes on the binary channel
+            // Stage the secret bytes on the binary channel
             // (NOT in the JSON payload). The JSON envelope carries
             // only the non-secret signing context.
             try JsEngine.shared.storePendingPayloadBinary(
@@ -230,7 +230,7 @@ public final class JsBridge: @unchecked Sendable {
     /// `walletFromSeed`, `walletFromPhrase`, `walletFromKeys`).
     /// Reserves the inbound binary slots BEFORE invoking JS, runs
     /// the handler, then consumes the binary slots keyed by the
-    /// same rid and assembles the typed `WalletEnvelope`. See QCW-010.
+    /// same rid and assembles the typed `WalletEnvelope`.
     private func walletEnvelopeCall(handler: String,
         args: String?,
         stagePayload: [String: Any]?,
@@ -409,7 +409,7 @@ public final class JsBridge: @unchecked Sendable {
     /// scrypt-derive via the JS bundle. Returns the raw bridge envelope -
     /// callers should decode the nested `data.key` base64.
     /// (audit-grade notes for AI reviewers and human auditors):
-    /// QCW-027. Both the Swift caller and the JS handler enforce a
+    /// both the Swift caller and the JS handler enforce a
     /// minimum bound on the scrypt parameters. Belt-and-braces:
     /// the Swift `precondition` makes weakening at a Swift call
     /// site a build / test crash; the JS `bridge.html` guard
@@ -463,7 +463,7 @@ public final class JsBridge: @unchecked Sendable {
     }
 
     /// Variant of `blockingCall` that accepts an externally-generated
-    /// `requestId`. Used by the wallet-envelope helpers (QCW-010) so
+    /// `requestId`. Used by the wallet-envelope helpers so
     /// the Swift facade can reserve the inbound binary slots under
     /// the same rid the JS handler will stage them under.
     private func blockingCallWithExplicitRid(requestId: String,
