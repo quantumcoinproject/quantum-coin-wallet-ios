@@ -217,13 +217,54 @@ public enum StrongboxFileCodec {
     /// slot files are simply absent (first launch / fresh
     /// install) so the caller can branch into the "create new
     /// strongbox" path.
+    /// Thin wrapper over `readCandidates()` for callers that only
+    /// need the highest-gen valid slot (legacy callers,
+    /// `bootState`, `persistSnapshot`).
     public static func readWinner() throws -> DecodedFile? {
+        return try readCandidates().first
+    }
+
+    /// Read both slots and return ALL valid candidates ordered by
+    /// generation descending (winner first, runner-up second).
+    /// What it closes:
+    ///   SECURITY_AUDIT_FINDINGS.md UNIFIED-D003. The historical
+    ///   `readWinner()` returned a single candidate; if the
+    ///   highest-generation slot was structurally pre-MAC valid
+    ///   but failed the file-level MAC or strongbox AEAD step at
+    ///   layer 4 (because the bytes were tampered between the
+    ///   pre-trial and the real verify, or because a partial-write
+    ///   produced a slot whose pre-MAC trial passed but the real
+    ///   MAC didn't), the user got `tamperDetected` and lost
+    ///   access — even though the OLDER, fully-valid runner-up
+    ///   was sitting one slot away on disk.
+    /// Why this shape (return both, let layer 4 try in order):
+    ///   The codec layer can only do the structural pre-MAC trial
+    ///   without the user-derived key. The real MAC and AEAD
+    ///   verification require `mainKey`, which only layer 4 has.
+    ///   So we return both pre-trial-valid candidates and let
+    ///   layer 4 try them in turn. On a successful fallback
+    ///   layer 4 surfaces the recovery via
+    ///   `StrongboxRedundancyState.markSingleSlot()` so the next
+    ///   unlock dialog can warn the user to create a fresh backup.
+    /// Tradeoffs:
+    ///   Storing both candidates briefly doubles the in-memory
+    ///   working set during unlock (~few KB per candidate). The
+    ///   per-candidate scrypt is paid only once per attempt
+    ///   because layer 4 reuses `derivedKey` across candidates
+    ///   when their `kdfSalt` matches (the common case).
+    /// Cross-references:
+    ///   - SECURITY_AUDIT_FINDINGS.md UNIFIED-D003.
+    ///   - `UnlockCoordinatorV2.unlockWithPassword` for the
+    ///     fallback driver.
+    ///   - `StrongboxRedundancyState` for the user-visible
+    ///     recovery banner.
+    public static func readCandidates() throws -> [DecodedFile] {
         AtomicSlotWriter.shared.cleanupTempFiles()
 
         let aBytes = try AtomicSlotWriter.shared.read(slot: .A)
         let bBytes = try AtomicSlotWriter.shared.read(slot: .B)
 
-        if aBytes == nil && bBytes == nil { return nil }
+        if aBytes == nil && bBytes == nil { return [] }
 
         // Try to parse + AEAD-tag-trial each slot.
         let aValid = aBytes.flatMap { tryDecodeAndPreVerify($0) }
@@ -236,12 +277,12 @@ public enum StrongboxFileCodec {
             // Schedule async re-mirror so future reads have
             // redundancy again. Layer 1 owns the actual write.
             scheduleReMirror(of: a, into: .B)
-            return a
+            return [a]
             case (nil, let b?):
             scheduleReMirror(of: b, into: .A)
-            return b
+            return [b]
             case (let a?, let b?):
-            return a.generation >= b.generation ? a : b
+            return a.generation >= b.generation ? [a, b] : [b, a]
         }
     }
 
@@ -265,6 +306,39 @@ public enum StrongboxFileCodec {
     /// `writeNewGeneration`'s observable semantics unchanged
     /// (still synchronous-from-the-caller's-perspective) while
     /// making the inter-thread ordering a code-level invariant.
+    /// Encode the supplied component values into the v2 JSON shape,
+    /// compute the file-level MAC, durably commit the resulting bytes
+    /// to the inactive slot, AND deep-verify the just-written file
+    /// before letting the rename promote it.
+    /// Why "deep verify" and not just MAC verify:
+    ///   MAC verify alone proves the file we wrote is internally
+    ///   MAC-consistent under our `macKey`. That does NOT prove that
+    ///   AEAD-opening the strongbox envelope with our `mainKey` will
+    ///   succeed, that the unpad step won't fail, that the JSON
+    ///   decode will round-trip, or that the resulting payload is
+    ///   the same wallets / networks / flags the user just asked us
+    ///   to save. Deep verify proves the entire encode -> pad ->
+    ///   seal -> write -> read -> open -> unpad -> decode round-trip
+    ///   is a no-op for THIS specific payload. A user who taps
+    ///   "Add Wallet" and then re-launches the app is guaranteed to
+    ///   see the wallet because the system literally re-decoded that
+    ///   wallet from disk and confirmed it byte-matches the in-memory
+    ///   payload BEFORE promoting the slot.
+    /// Tradeoffs:
+    ///   The deep verify costs one extra AEAD-open (~5 µs), one
+    ///   unpad (~µs), one JSON decode (~50-200 µs for 1 wallet,
+    ///   ~1 ms for 100 wallets), and one canonical re-encode +
+    ///   byte-compare (~µs to ms). Total well under the 50 ms
+    ///   budget the verify pass already has from the disk re-read;
+    ///   below user perception under all realistic wallet sizes.
+    /// Cross-references:
+    ///   - SECURITY_AUDIT_FINDINGS.md UNIFIED-D010 (closed by this).
+    ///   - `AtomicSlotWriter.writeAndVerify` for the atomicity layer
+    ///     that hosts the verify closure.
+    ///   - `UnlockCoordinatorV2.persistSnapshot` /
+    ///     `createNewStrongbox` / `createNewStrongboxWithInitialWallet`
+    ///     are the only legitimate callers; they have `mainKey` and
+    ///     `expectedPayload` in scope from the seal step.
     public static func writeNewGeneration(
         generation: Int,
         kdfSalt: Data,
@@ -273,8 +347,11 @@ public enum StrongboxFileCodec {
         keychainWrap: AeadEnvelope?,
         strongbox: AeadEnvelope,
         macKey: Data,
+        mainKey: Data,
+        expectedPayload: StrongboxPayload,
         uiBlock: [String: Any],
-        currentSlot: AtomicSlotWriter.Slot
+        currentSlot: AtomicSlotWriter.Slot,
+        onPhase: ((AtomicSlotWriter.WriteVerifyPhase) -> Void)? = nil
     ) throws {
         let uiHash = try canonicalUiBlockHash(uiBlock)
         let mainObj = encodeMainObject(
@@ -295,8 +372,130 @@ public enum StrongboxFileCodec {
 
         let payload = try JSONSerialization.data(
             withJSONObject: fullObj, options: [.sortedKeys])
+
+        // Capture canonical bytes of the expected payload BEFORE
+        // sealing so the verify closure can byte-compare without
+        // requiring StrongboxPayload to be Equatable. The
+        // canonicalisation is the same as the seal path used
+        // (sortedKeys JSONEncoder), so byte-equal == deep-equal.
+        let payloadEncoder = JSONEncoder()
+        payloadEncoder.outputFormatting = [.sortedKeys]
+        let expectedCanonical = try payloadEncoder.encode(expectedPayload)
+
         try writerQueue.sync {
-            try AtomicSlotWriter.shared.write(payload, to: currentSlot.other)
+            try AtomicSlotWriter.shared.writeAndVerify(payload,
+                to: currentSlot.other,
+                verify: { stagedBytes in
+                    try deepVerifyStaged(
+                        stagedBytes: stagedBytes,
+                        expectedGeneration: generation,
+                        macKey: macKey,
+                        mainKey: mainKey,
+                        expectedCanonical: expectedCanonical,
+                        payloadEncoder: payloadEncoder)
+                },
+                onPhase: onPhase)
+        }
+    }
+
+    /// Step-by-step deep verify of the just-staged slot bytes.
+    /// Extracted from the verify closure so the eight steps each
+    /// have an explicit name in stack traces and so future audit
+    /// reviews can pattern-match each step against this method's
+    /// docstring rather than reading nested closure code.
+    /// Steps (any of which throws on failure, aborting the rename):
+    ///   A. Re-decode the JSON + recompute uiBlockHash binding.
+    ///   B. Generation match: file reports the generation we asked
+    ///      for. Drift => writeAll + read-back saw different bytes.
+    ///   C. File-level MAC verify under the same `macKey` we just
+    ///      sealed with. Mismatch => encoder bug, MAC bug, or
+    ///      silent corruption between encode and re-read.
+    ///   D. AEAD-open the strongbox envelope with the same `mainKey`
+    ///      we just sealed under. Failure => seal/open asymmetry or
+    ///      ciphertext drift.
+    ///   E. Strip the 32 KiB fixed padding. Failure => padding scheme
+    ///      drifted (pad and unpad disagree on the 0x80 marker, or
+    ///      the bucket size changed between calls).
+    ///   F. JSON-decode into a typed `StrongboxPayload`. Failure =>
+    ///      encoder/decoder drifted (we use sortedKeys on both sides
+    ///      to prevent this).
+    ///   G. Inner checksum verify. Defense-in-depth on top of AEAD;
+    ///      cheap and the alarm value is high.
+    ///   H. BYTE-COMPARE the canonical encoding of the decoded
+    ///      payload to the canonical encoding of the expected
+    ///      payload. This is the strongest single invariant: a
+    ///      byte-equal match means the entire encode -> seal ->
+    ///      write -> read -> open -> decode round-trip is a no-op.
+    private static func deepVerifyStaged(
+        stagedBytes: Data,
+        expectedGeneration: Int,
+        macKey: Data,
+        mainKey: Data,
+        expectedCanonical: Data,
+        payloadEncoder: JSONEncoder
+    ) throws {
+        // Step A: schema decode (also recomputes uiBlockHash binding).
+        let staged = try decodeOnly(stagedBytes)
+
+        // Step B: generation match guard.
+        guard staged.generation == expectedGeneration else {
+            throw Error.malformedJson(
+                "verify: generation drift "
+                + "asked=\(expectedGeneration) read=\(staged.generation)")
+        }
+
+        // Step C: file-level MAC verify.
+        try verifyFileLevelMac(staged, macKey: macKey)
+
+        // Step D: AEAD-open the strongbox envelope with mainKey.
+        let paddedPlaintext: Data
+        do {
+            paddedPlaintext = try Aead.open(
+                staged.strongbox.legacyEnvelopeJson(),
+                keyBytes: mainKey)
+        } catch {
+            throw Error.malformedJson(
+                "verify: strongbox aead open failed: \(error)")
+        }
+
+        // Step E: strip 32 KiB fixed padding.
+        let plaintext: Data
+        do {
+            plaintext = try StrongboxPadding.unpad(paddedPlaintext)
+        } catch {
+            throw Error.malformedJson(
+                "verify: padding unpad failed: \(error)")
+        }
+
+        // Step F: JSON-decode into typed StrongboxPayload.
+        let decoded: StrongboxPayload
+        do {
+            decoded = try JSONDecoder().decode(
+                StrongboxPayload.self, from: plaintext)
+        } catch {
+            throw Error.malformedJson(
+                "verify: payload decode failed: \(error)")
+        }
+
+        // Step G: inner checksum verify.
+        guard Strongbox.verifyChecksum(of: decoded) else {
+            throw Error.malformedJson(
+                "verify: payload checksum mismatch")
+        }
+
+        // Step H: BYTE-COMPARE the round-trip.
+        let actualCanonical: Data
+        do {
+            actualCanonical = try payloadEncoder.encode(decoded)
+        } catch {
+            throw Error.malformedJson(
+                "verify: round-trip re-encode failed: \(error)")
+        }
+        guard actualCanonical == expectedCanonical else {
+            throw Error.malformedJson(
+                "verify: round-trip byte-compare drift "
+                + "(expected=\(expectedCanonical.count)B "
+                + "actual=\(actualCanonical.count)B)")
         }
     }
 
@@ -541,32 +740,53 @@ public enum StrongboxFileCodec {
 
     // MARK: - Re-mirror scheduler
 
+    /// Re-mirror the surviving slot into the failed slot's path so
+    /// future reads see redundancy again. Called by `readWinner`
+    /// when one slot is invalid and the other passes the pre-MAC
+    /// trial. Up to TWO retries (immediate + 2-second backoff)
+    /// before flagging single-slot redundancy state.
+    /// What it closes:
+    ///   SECURITY_AUDIT_FINDINGS.md UNIFIED-D012. The historical
+    ///   shape used `try?` for both the read-back and the write,
+    ///   so a transient I/O failure left the surviving slot
+    ///   single-redundant indefinitely with no user-visible signal.
+    /// Why this shape (do/catch + retry + StrongboxRedundancyState):
+    ///   The retry covers transient EAGAIN / ENOSPC-during-cache-
+    ///   eviction storms — the re-mirror is best-effort but valuable
+    ///   enough that a one-shot transient failure should not leave
+    ///   the user single-slot. After the retry budget is exhausted
+    ///   we mark `StrongboxRedundancyState.singleSlot` so the
+    ///   unlock dialog can surface a "create a fresh backup soon"
+    ///   banner. The user then has agency to recover before a
+    ///   second corruption destroys the last good copy.
+    /// Tradeoffs:
+    ///   The 2-second backoff is a constant rather than exponential
+    ///   because we only do two attempts; longer backoffs would
+    ///   delay the user-visible banner for no recovery benefit.
+    /// Cross-references:
+    ///   - `StrongboxRedundancyState` for the process-level flag.
+    ///   - SECURITY_AUDIT_FINDINGS.md UNIFIED-D012.
     private static func scheduleReMirror(of decoded: DecodedFile,
-        into slot: AtomicSlotWriter.Slot) {
-        // Best-effort re-mirror: re-canonicalise the slot's
-        // bytes (we lost the original byte-exact form when we
-        // decoded the JSON, so we re-encode) and write into the
-        // INVALID slot so future reads see redundancy again. We
-        // dispatch async because the caller (layer 4) is on
-        // the unlock-critical path and should not pay this cost
-        // synchronously.
-        // (audit-grade notes for AI reviewers and human
-        // auditors): the re-mirror is serialised through the
-        // same dispatch queue as `writeNewGeneration` AND
-        // re-checks the on-disk generation just
-        // before writing. A fresh write that committed
-        // between the original `readWinner` and this re-mirror
-        // will have a higher generation; the re-check causes
-        // the re-mirror to be skipped so it cannot clobber
-        // the freshly-committed slot.
-        writerQueue.async {
-            // Re-check: if a higher generation has been
-            // written to the target slot since `readWinner`
-            // ran, skip the re-mirror so we don't clobber.
+        into slot: AtomicSlotWriter.Slot,
+        attempt: Int = 0) {
+        // Schedule via writerQueue (serialises against
+        // writeNewGeneration). The first attempt runs immediately;
+        // retries wait 2 seconds so a transient cause has time to
+        // clear (cache eviction, NSURLSession-driven fs pressure,
+        // etc.).
+        let delay: DispatchTime = (attempt == 0) ? .now() : .now() + .seconds(2)
+        writerQueue.asyncAfter(deadline: delay) {
+            // Re-check: if a higher generation has been written to
+            // the target slot since `readWinner` ran, skip the
+            // re-mirror so we don't clobber a freshly-committed
+            // slot.
             if let currentBytes = try? AtomicSlotWriter.shared.read(slot: slot),
             let currentObj = (try? JSONSerialization.jsonObject(with: currentBytes)) as? [String: Any],
             let currentGen = currentObj["generation"] as? Int,
             currentGen >= decoded.generation {
+                // Redundant pair already exists on disk; clear any
+                // stale single-slot flag from an earlier session.
+                StrongboxRedundancyState.shared.markRedundant()
                 return
             }
             var fullObj = encodeMainObject(
@@ -579,15 +799,40 @@ public enum StrongboxFileCodec {
                 uiBlockHash: decoded.uiBlockHash)
             fullObj["mac"] = decoded.mac.base64EncodedString()
             // Emit the on-disk `ui` block VERBATIM from the
-            // surviving slot so the re-mirrored slot's
-            // recomputed `uiBlockHash` matches the MAC-bound
-            // on-disk value. See the `DecodedFile.uiBlock`
-            // field doc.
+            // surviving slot so the re-mirrored slot's recomputed
+            // `uiBlockHash` matches the MAC-bound on-disk value.
             fullObj["ui"] = decoded.uiBlock
-            guard let bytes = try? JSONSerialization.data(
-                withJSONObject: fullObj, options: [.sortedKeys])
-            else { return }
-            try? AtomicSlotWriter.shared.write(bytes, to: slot)
+            let bytes: Data
+            do {
+                bytes = try JSONSerialization.data(
+                    withJSONObject: fullObj, options: [.sortedKeys])
+            } catch {
+                Logger.warn(category: "RE_MIRROR_FAIL",
+                    "attempt=\(attempt) canonicalize failed: \(error)")
+                if attempt < 2 {
+                    scheduleReMirror(of: decoded, into: slot,
+                        attempt: attempt + 1)
+                } else {
+                    StrongboxRedundancyState.shared.markSingleSlot()
+                }
+                return
+            }
+            do {
+                try AtomicSlotWriter.shared.write(bytes, to: slot)
+                // Re-mirror succeeded; we now have two valid slots.
+                // Clear any stale single-slot flag from an earlier
+                // failed re-mirror in this process.
+                StrongboxRedundancyState.shared.markRedundant()
+            } catch {
+                Logger.warn(category: "RE_MIRROR_FAIL",
+                    "attempt=\(attempt) write failed: \(error)")
+                if attempt < 2 {
+                    scheduleReMirror(of: decoded, into: slot,
+                        attempt: attempt + 1)
+                } else {
+                    StrongboxRedundancyState.shared.markSingleSlot()
+                }
+            }
         }
     }
 

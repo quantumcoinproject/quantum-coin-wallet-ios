@@ -299,7 +299,17 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 guard let tag = group.selectedTag else {
                     self.showSelectAnOption(); return
                 }
-                PrefConnect.shared.writeBool(PrefKeys.BACKUP_ENABLED_KEY, tag == 1)
+                // PrefConnect setters are now throwing (Part 5). A
+                // failed flush here downgrades to "next launch sees
+                // BACKUP_ENABLED_KEY at the previous value" rather
+                // than data loss; log + continue.
+                do {
+                    try PrefConnect.shared.writeBool(
+                        PrefKeys.BACKUP_ENABLED_KEY, tag == 1)
+                } catch {
+                    Logger.warn(category: "PREFS_FLUSH_FAIL",
+                        "BACKUP_ENABLED_KEY: \(error)")
+                }
                 // Re-apply the iCloud-Backup exclusion bit so the
                 // toggle takes effect immediately. On a truly-fresh
                 // install neither slot file exists yet, so this call
@@ -694,16 +704,41 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// `UnlockDialogViewController` before reaching here.
     private func commitGeneratedWallet(password: String,
         then: @escaping () -> Void) {
-        // If we already committed (e.g. user came back to verify and
-        // is finishing for the second time), short-circuit to avoid a
-        // duplicate keystore slot.
+        // Idempotency guards. Two layered checks:
+        //   (a) `walletIndex >= 0` catches the same-controller
+        //       re-tap (the field survives across renders) —
+        //       this is the historical guard.
+        //   (b) `Strongbox.index(forAddress:)` catches the
+        //       case where `walletIndex` was lost (e.g. the
+        //       view was rebuilt or the user re-entered via
+        //       Wallets-list "Add wallet") but the strongbox
+        //       already holds this address. Without (b), a
+        //       back/Next on the same generated seed would
+        //       silently append a second slot for the same
+        //       wallet. Source of truth is the loaded snapshot.
         if walletIndex >= 0 {
+            then()
+            return
+        }
+        if Strongbox.shared.isSnapshotLoaded,
+        let existing = Strongbox.shared.index(forAddress: generatedAddress) {
+            walletIndex = existing
             then()
             return
         }
         let wait = WaitDialogViewController(message:
             Localization.shared.getWaitWalletSaveByLangValues())
         present(wait, animated: true)
+        // Phase callback wires the wait-dialog's secondary status
+        // line to the storage-layer write phase (writing -> verifying
+        // -> promoting -> committed). The main "Please wait..." message
+        // stays visible the entire time; "Verifying..." flashes ON
+        // during the integrity-check window between F_FULLFSYNC and
+        // rename, then OFF on promote. See
+        // `WaitDialogViewController.setStatus` for the audit
+        // invariant, and `AtomicSlotWriter.writeAndVerify` for the
+        // closure called between writeAll and rename.
+        let onPhase = makeVerifyingPhaseHandler(for: wait)
         let address = generatedAddress
         let seedWords = generatedSeed
         Task.detached(priority: .userInitiated) {
@@ -712,31 +747,57 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 // `{seedWords:[...]}` payload (bridge.html line 372).
                 let walletInputJson = BackupExporter.encodeWalletInput(seedWords: seedWords)
                 // First-launch bootstrap vs returning-user paths:
-                // - First launch (no slot file): create the
-                // strongbox via `createNewStrongbox`, then
-                // `appendWallet` writes the first slot.
-                // - Returning user (slot file present): unlock
-                // the existing strongbox and append.
-                // Both paths re-derive the mainKey from the
-                // user's password inside the coordinator and zero
-                // it on return - the strongbox key bytes never
-                // survive past the helper call.
-                try Self.bootstrapOrUnlock(password: password)
+                // - First launch (no slot file): use Part 6's atomic
+                //   `createNewStrongboxWithInitialWallet` so the
+                //   first wallet is committed inside the SAME slot
+                //   write that creates the strongbox. A power-cut
+                //   between the historical pair (createNewStrongbox
+                //   + appendWallet) could leave an "empty wallet"
+                //   strongbox the user trusted as saved — closes
+                //   UNIFIED-D004.
+                // - Returning user (slot file present): unlock the
+                //   existing strongbox and append.
+                // Both paths re-derive the mainKey from the user's
+                // password inside the coordinator and zero it on
+                // return - the strongbox key bytes never survive
+                // past the helper call.
                 let encryptedEnv = try JsBridge.shared.encryptWalletJson(
                     walletInputJson: walletInputJson, password: password)
                 guard let enc = BackupExporter.extractEncryptedJson(encryptedEnv) else {
                     throw UnlockCoordinatorV2Error.decodeFailed
                 }
-                let idx = try UnlockCoordinatorV2.appendWallet(
-                    address: address,
-                    encryptedSeed: enc,
-                    hasSeed: true,
-                    password: password)
+                let idx: Int
+                if !Strongbox.shared.isSnapshotLoaded,
+                case .noStrongbox = UnlockCoordinatorV2.bootState() {
+                    let wallet = StrongboxPayload.Wallet(
+                        idx: 0,
+                        address: address,
+                        encryptedSeed: enc,
+                        hasSeed: true)
+                    try UnlockCoordinatorV2.createNewStrongboxWithInitialWallet(
+                        password: password,
+                        initialWallet: wallet,
+                        onPhase: onPhase)
+                    idx = 0
+                } else {
+                    try Self.bootstrapOrUnlock(password: password, onPhase: onPhase)
+                    idx = try UnlockCoordinatorV2.appendWallet(
+                        address: address,
+                        encryptedSeed: enc,
+                        hasSeed: true,
+                        password: password,
+                        onPhase: onPhase)
+                }
                 await MainActor.run { [weak self] in
                     self?.generatedWalletJson = enc
                     self?.walletIndex = idx
-                    PrefConnect.shared.writeInt(
-                        PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+                    do {
+                        try PrefConnect.shared.writeInt(
+                            PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+                    } catch {
+                        Logger.warn(category: "PREFS_FLUSH_FAIL",
+                            "WALLET_CURRENT_ADDRESS_INDEX_KEY: \(error)")
+                    }
                     wait.dismiss(animated: true) { then() }
                 }
             } catch {
@@ -757,13 +818,60 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// may run while another path has already loaded the snapshot
     /// (e.g. add-wallet from the wallets list); in that case we
     /// short-circuit because the snapshot is fresh.
-    nonisolated private static func bootstrapOrUnlock(password: String) throws {
-        if Strongbox.shared.isSnapshotLoaded { return }
+    /// What it closes:
+    ///   The "wrong password silently accepted" bug on the
+    ///   onboarding-flow unlock dialog (post-create backup
+    ///   screen Next, restore-flow add-wallet unlock prompt).
+    ///   The historical shape was
+    ///   `if Strongbox.shared.isSnapshotLoaded { return }` at
+    ///   the very top — which short-circuited the whole helper
+    ///   to "success" when the snapshot was already loaded by a
+    ///   previous create / restore step. Any password the user
+    ///   typed was reported as correct without ever AEAD-opening
+    ///   `passwordWrap`. The user could finish onboarding with
+    ///   PWD-A, tap Next on the backup screen, type PWD-B, and
+    ///   be routed home — only to discover at the next cold
+    ///   launch that PWD-A is the actual seal key.
+    /// Why this shape (verify-on-snapshot-loaded):
+    ///   When the snapshot is already loaded we MUST NOT call
+    ///   `unlockWithPasswordAndApplySession` (that path
+    ///   re-installs the snapshot, bumps the counter, and
+    ///   re-applies the session — none of which is safe against
+    ///   a live wallet). Instead we route through the new
+    ///   read-only `UnlockCoordinatorV2.verifyPassword` which
+    ///   AEAD-opens `passwordWrap` and signals the brute-force
+    ///   limiter, but does not touch any other state.
+    /// Tradeoffs:
+    ///   Pays one extra scrypt (~300 ms) on the post-create
+    ///   unlock prompt path. That cost is invisible next to the
+    ///   wait dialog the caller already presents during
+    ///   `commitGeneratedWallet` / `persistPendingWallet`.
+    /// Cross-references:
+    ///   - `UnlockCoordinatorV2.verifyPassword(_:)` for the
+    ///     read-only validator.
+    ///   - `RestoreFlow.bootstrapOrUnlock` for the matching
+    ///     change on the restore side.
+    ///   - `tapBackupDone` and `presentUnlockThen` are the call
+    ///     sites that benefit from this fix.
+    nonisolated private static func bootstrapOrUnlock(password: String,
+        onPhase: UnlockCoordinatorV2.WriteVerifyPhaseCallback? = nil) throws {
         switch UnlockCoordinatorV2.bootState() {
             case .noStrongbox:
-            try UnlockCoordinatorV2.createNewStrongbox(password: password)
+            try UnlockCoordinatorV2.createNewStrongbox(
+                password: password, onPhase: onPhase)
             case .strongboxPresent:
-            try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(password)
+            if Strongbox.shared.isSnapshotLoaded {
+                // Snapshot already loaded by a prior step;
+                // verify the password against the on-disk
+                // `passwordWrap` without re-installing the
+                // snapshot or bumping the rollback counter.
+                try UnlockCoordinatorV2.verifyPassword(password)
+            } else {
+                // Cold-path unlock: derive mainKey, install
+                // snapshot, apply session, bump counter — the
+                // full unlock pipeline.
+                try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(password)
+            }
             case .tampered(let why):
             throw UnlockCoordinatorV2Error.tamperDetected(why)
         }
@@ -885,9 +993,41 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// `walletFromPhrase` returned only the latter, but seed words are
     /// the canonical recovery material so prefer them.
     private func persistPendingWallet(password: String) {
+        // Idempotency guard. The historical shape ran the
+        // encrypt + bootstrap + appendWallet pipeline every
+        // time the user tapped Next on `.confirmWallet`,
+        // including when the user back-tapped to fix a typo
+        // and re-tapped Next on the same seed. Each re-entry
+        // appended a brand-new wallet slot with the same
+        // seed but a different `idx`, producing 2..N
+        // duplicate entries in the wallets list. Two layered
+        // checks now short-circuit on a re-entry:
+        //   (a) `walletIndex >= 0` catches the same-controller
+        //       re-tap (the field survives across renders).
+        //   (b) `Strongbox.index(forAddress:)` catches the
+        //       case where `walletIndex` was lost (e.g. the
+        //       view was rebuilt) but the strongbox already
+        //       holds this address — the source of truth is
+        //       the loaded snapshot.
+        // Both branches advance to `.backupOptions` because
+        // a successful prior persist is by definition the
+        // state the user was trying to reach.
+        if walletIndex >= 0 {
+            step = .backupOptions
+            return
+        }
+        if Strongbox.shared.isSnapshotLoaded,
+        let existing = Strongbox.shared.index(forAddress: pendingAddress) {
+            walletIndex = existing
+            step = .backupOptions
+            return
+        }
         let wait = WaitDialogViewController(message:
             Localization.shared.getWaitWalletSaveByLangValues())
         present(wait, animated: true)
+        // See `commitGeneratedWallet` for the rationale on the
+        // phase-callback / "Verifying..." secondary status line wiring.
+        let onPhase = makeVerifyingPhaseHandler(for: wait)
         let address = pendingAddress
         let seedWords = pendingSeedWords
         // Set the seed up front so the wallet home screen has it as soon
@@ -897,26 +1037,50 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         Task.detached(priority: .userInitiated) {
             do {
                 let walletInputJson = BackupExporter.encodeWalletInput(seedWords: seedWords)
-                // Bootstrap (first-launch) or unlock (returning
-                // user) so the appendWallet write below sees a
-                // consistent strongbox. The strongbox key never
-                // survives this call - see bootstrapOrUnlock.
-                try Self.bootstrapOrUnlock(password: password)
+                // Same atomic-bootstrap rationale as
+                // `commitGeneratedWallet`: on a fresh install
+                // (.noStrongbox) we use Part 6's atomic
+                // createNewStrongboxWithInitialWallet so a power-
+                // cut never leaves an empty-wallet strongbox the
+                // user has trusted as saved. Closes UNIFIED-D004.
                 let encEnv = try JsBridge.shared.encryptWalletJson(
                     walletInputJson: walletInputJson, password: password)
                 guard let enc = BackupExporter.extractEncryptedJson(encEnv) else {
                     throw UnlockCoordinatorV2Error.decodeFailed
                 }
-                let idx = try UnlockCoordinatorV2.appendWallet(
-                    address: address,
-                    encryptedSeed: enc,
-                    hasSeed: true,
-                    password: password)
+                let idx: Int
+                if !Strongbox.shared.isSnapshotLoaded,
+                case .noStrongbox = UnlockCoordinatorV2.bootState() {
+                    let wallet = StrongboxPayload.Wallet(
+                        idx: 0,
+                        address: address,
+                        encryptedSeed: enc,
+                        hasSeed: true)
+                    try UnlockCoordinatorV2.createNewStrongboxWithInitialWallet(
+                        password: password,
+                        initialWallet: wallet,
+                        onPhase: onPhase)
+                    idx = 0
+                } else {
+                    try Self.bootstrapOrUnlock(password: password, onPhase: onPhase)
+                    idx = try UnlockCoordinatorV2.appendWallet(
+                        address: address,
+                        encryptedSeed: enc,
+                        hasSeed: true,
+                        password: password,
+                        onPhase: onPhase)
+                }
                 await MainActor.run { [weak self] in
                     self?.generatedWalletJson = enc
                     self?.generatedAddress = address
                     self?.walletIndex = idx
-                    PrefConnect.shared.writeInt(PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+                    do {
+                        try PrefConnect.shared.writeInt(
+                            PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+                    } catch {
+                        Logger.warn(category: "PREFS_FLUSH_FAIL",
+                            "WALLET_CURRENT_ADDRESS_INDEX_KEY: \(error)")
+                    }
                     wait.dismiss(animated: true) { self?.step = .backupOptions }
                 }
             } catch {

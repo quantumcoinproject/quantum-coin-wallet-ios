@@ -201,4 +201,61 @@ public enum KeychainGenerationCounter {
             throw KeychainGenerationCounterError.keychainStatus(status, op: "store")
         }
     }
+
+    /// Reset the counter and immediately set it to `value`, all
+    /// in one logical operation that surfaces a single error to
+    /// the caller. Used by the fresh-strongbox-creation path:
+    /// previously this was implemented as a `reset() + bump(to: 1)`
+    /// pair inside a single do/catch — which had the failure mode
+    /// that a `reset()` throw would skip the `bump` AND get
+    /// swallowed by the do/catch's outer `Logger.debug`, leaving
+    /// the stale counter intact silently. The next persist would
+    /// then trip the rollback gate and brick the user's
+    /// freshly-created wallet.
+    /// What it closes:
+    ///   SECURITY_AUDIT_FINDINGS.md UNIFIED-D007 (granular counter
+    ///   error handling). The semantic is "guarantee the counter
+    ///   ends up at `value` (or surface an error)" - non-monotonic
+    ///   transitions are intentional here because the slot files
+    ///   start fresh at generation 1.
+    /// Why this shape (single transaction):
+    ///   `bump(to:)` is monotonic and would silently no-op against
+    ///   a stale higher counter. Splitting reset + bump into
+    ///   separate calls left a window where reset succeeded but
+    ///   bump throw'd (or vice versa), which is impossible to
+    ///   recover from without retrying the same sequence. A single
+    ///   delete-then-add transaction has only two outcomes from the
+    ///   caller's perspective (success or failure with the counter
+    ///   in a known-bad state that the next call will fix).
+    /// Tradeoffs:
+    ///   `bumpFresh` does NOT respect monotonicity (that is the
+    ///   point). It must only be called from createNewStrongbox /
+    ///   createNewStrongboxWithInitialWallet - paths that have just
+    ///   proven via the residual-slot guard that no slot files
+    ///   exist, so any pre-existing counter is orphaned state.
+    public static func bumpFresh(to value: Int) throws {
+        let bytes = Data(String(value).utf8)
+        let attrs: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecValueData as String: bytes
+        ]
+        // Best-effort delete first (mirrors `bump(to:)` discipline);
+        // an errSecItemNotFound here is fine because that's exactly
+        // the state we want before the add. Any other delete error
+        // (genuine Keychain failure) gets surfaced via the add
+        // attempt below — if delete failed AND the entry still
+        // exists, SecItemAdd returns errSecDuplicateItem and we
+        // throw. If delete failed for a transient reason that does
+        // not leave a duplicate, the add succeeds and we return
+        // cleanly. Either outcome is correct.
+        SecItemDelete(attrs as CFDictionary)
+        let status = SecItemAdd(attrs as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw KeychainGenerationCounterError.keychainStatus(status, op: "bumpFresh")
+        }
+    }
 }

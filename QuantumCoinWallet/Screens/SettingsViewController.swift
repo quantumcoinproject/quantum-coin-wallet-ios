@@ -156,7 +156,13 @@ public final class SettingsViewController: UIViewController, HomeScreenViewTypeP
             message: L.getAdvancedSigningDescriptionByLangValues(),
             initialEnabled: PrefConnect.shared.readBool(PrefKeys.ADVANCED_SIGNING_ENABLED_KEY)
         ) { enabled in
-            PrefConnect.shared.writeBool(PrefKeys.ADVANCED_SIGNING_ENABLED_KEY, enabled)
+            do {
+                try PrefConnect.shared.writeBool(
+                    PrefKeys.ADVANCED_SIGNING_ENABLED_KEY, enabled)
+            } catch {
+                Logger.warn(category: "PREFS_FLUSH_FAIL",
+                    "ADVANCED_SIGNING_ENABLED_KEY: \(error)")
+            }
         }
         present(dlg, animated: true)
     }
@@ -180,7 +186,13 @@ public final class SettingsViewController: UIViewController, HomeScreenViewTypeP
             message: L.getBackupDescriptionByLangValues(),
             initialEnabled: PrefConnect.shared.readBool(PrefKeys.BACKUP_ENABLED_KEY)
         ) { enabled in
-            PrefConnect.shared.writeBool(PrefKeys.BACKUP_ENABLED_KEY, enabled)
+            do {
+                try PrefConnect.shared.writeBool(
+                    PrefKeys.BACKUP_ENABLED_KEY, enabled)
+            } catch {
+                Logger.warn(category: "PREFS_FLUSH_FAIL",
+                    "BACKUP_ENABLED_KEY: \(error)")
+            }
             BackupExclusion.applyToStrongboxFiles()
         }
         present(dlg, animated: true)

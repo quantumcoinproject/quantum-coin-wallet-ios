@@ -1024,9 +1024,23 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         // signed-transaction's chain-id and from-address to the
         // values the user CONFIRMED, not whatever happens to be
         // active when scrypt finishes.
+        // Use the synchronous mirror `NetworkConfig.currentSync`
+        // here (added by the UNIFIED-007 fix) so the snapshot
+        // capture happens at the SAME runloop tick as the
+        // `BlockchainNetworkManager.shared.active?.name` read above.
+        // The previous shape captured via `await NetworkConfig.shared.current`
+        // INSIDE a detached Task, which created a torn-view window:
+        // a network switch on the main queue between this point
+        // and the actor's hop could leave `networkName` showing one
+        // value (read sync, pre-switch) and `captured` showing
+        // another (read async, post-switch). The signing path's
+        // submit-time re-assertion at line ~1281 below continues
+        // using `await NetworkConfig.shared.current` because that
+        // call is already inside an `await` context and benefits
+        // from the actor's serialisation guarantees.
+        let captured = NetworkConfig.currentSync
         let capturedFrom = from
         Task { [weak self] in
-            let captured = await NetworkConfig.shared.current
             // (audit-grade notes for AI reviewers and human auditors):
             // the TO checksum MUST come from the SDK or the
             // dialog MUST NOT render. A silent fallback to the

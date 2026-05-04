@@ -235,6 +235,15 @@ public final class SessionLock {
 
     private func lockAndPresent() {
         timer?.cancel()
+        // Part 4b: route the relock through `UnlockCoordinatorV2.lock()`
+        // (rather than `Strongbox.shared.clearSnapshot()` directly) so
+        // the relock waits behind any in-flight `persistSnapshot` /
+        // `appendWallet` / `setActiveNetwork` mutator. The coordinator's
+        // `lock()` takes the same `_mutationLock` (NSRecursiveLock) as
+        // every mutator, so a relock kicked off by the idle timer or a
+        // >5min foreground-resume can never clear the snapshot in the
+        // middle of a write pipeline. See SECURITY_AUDIT_FINDINGS.md
+        // UNIFIED-D006 (relock-during-persist).
         UnlockCoordinatorV2.lock()
         // No wallet configured yet? Just drop the snapshot -
         // there's nothing for the user to unlock. Onboarding will set

@@ -443,8 +443,14 @@ public final class CloudBackupManager: NSObject {
         guard let data = try? url.bookmarkData(options: [],
             includingResourceValuesForKeys: nil,
             relativeTo: nil) else { return }
-        PrefConnect.shared.writeString(PrefKeys.CLOUD_BACKUP_FOLDER_URI_KEY,
-            data.base64EncodedString())
+        do {
+            try PrefConnect.shared.writeString(
+                PrefKeys.CLOUD_BACKUP_FOLDER_URI_KEY,
+                data.base64EncodedString())
+        } catch {
+            Logger.warn(category: "PREFS_FLUSH_FAIL",
+                "CLOUD_BACKUP_FOLDER_URI: \(error)")
+        }
     }
 }
 

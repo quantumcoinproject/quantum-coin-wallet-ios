@@ -94,6 +94,8 @@
       "waitWalletOpen": "Please wait while your wallet is being decrypted and opened. This can take upto a minute...",
       "waitUnlock": "Please wait while your wallet is being decrypted and unlocked. This can take upto a minute.",
       "wait-opening-picker": "Please wait, opening picker...",
+      "status-verifying": "Verifying...",
+      "strongbox-degraded-banner": "Wallet integrity check recovered from a backup slot. Please create a fresh backup soon.",
       "dpscan": "Block Explorer",
       "address": "Address",
       "coins": "Coins",

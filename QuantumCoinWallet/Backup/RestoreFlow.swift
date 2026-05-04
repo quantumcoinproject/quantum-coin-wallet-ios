@@ -311,6 +311,13 @@ public final class RestoreFlow {
         let L = Localization.shared
         let wait = WaitDialogViewController(message: L.getWaitWalletOpenByLangValues())
         let progressTemplate = L.getRestoreProgressOfByLangValues()
+        // Phase callback wires the wait-dialog's secondary status
+        // line to "Verifying..." during the integrity-check window
+        // of each per-wallet strongbox slot write. The "N of M"
+        // progressLabel and the per-wallet detailLabel keep their
+        // own roles; the secondary status slot toggles independently.
+        // See `WaitDialogViewController.setStatus`.
+        let onPhase = makeVerifyingPhaseHandler(for: wait)
         // Present the wait overlay on top of the password dialog so
         // both stay visible during the pass (matching Android's
         // `WaitDialog.showWithDetails` behavior, which leaves the
@@ -327,7 +334,8 @@ public final class RestoreFlow {
                             .replacingOccurrences(of: "[CURRENT]", with: "\(i + 1)")
                             .replacingOccurrences(of: "[TOTAL]", with: "\(total)"))
                     }
-                    switch self.tryDecryptAndStore(candidate: c, password: password) {
+                    switch self.tryDecryptAndStore(candidate: c, password: password,
+                        onPhase: onPhase) {
                         case .imported:
                         await MainActor.run { self.didImportAny = true }
                         case .alreadyExists:
@@ -359,7 +367,8 @@ public final class RestoreFlow {
     /// so the caller keeps the candidate in the pending list for a
     /// retry.
     private func tryDecryptAndStore(candidate: Candidate,
-        password: String) -> DecryptOutcome {
+        password: String,
+        onPhase: UnlockCoordinatorV2.WriteVerifyPhaseCallback? = nil) -> DecryptOutcome {
         // Skip already-imported wallets up front so we don't waste a
         // scrypt cycle and don't pollute the keystore with duplicate
         // slots. Mirrors Android `walletAlreadyExists` short-circuit.
@@ -475,18 +484,6 @@ public final class RestoreFlow {
             } else {
                 strongboxWritePw = password
             }
-            if !Strongbox.shared.isSnapshotLoaded {
-                try Self.bootstrapOrUnlock(password: strongboxWritePw)
-                // The strongbox was just unlocked, so the
-                // address-index map now reflects whatever was
-                // already on disk. Re-check the dedupe gate here
-                // because we couldn't run it up-top while locked -
-                // importing a wallet that's already a slot would
-                // silently create a duplicate.
-                if Strongbox.shared.index(forAddress: candidate.address) != nil {
-                    return .alreadyExists
-                }
-            }
             // Re-encrypt the recovered seed under the STRONGBOX
             // password so the stored wallet's INNER layer matches
             // what Send / Reveal / Backup (and any other unlock-
@@ -503,16 +500,59 @@ public final class RestoreFlow {
                 reencryptedEnv) else {
                 throw UnlockCoordinatorV2Error.decodeFailed
             }
-            let idx = try UnlockCoordinatorV2.appendWallet(
-                address: candidate.address,
-                encryptedSeed: reencrypted,
-                hasSeed: true,
-                password: strongboxWritePw)
+            let idx: Int
+            if !Strongbox.shared.isSnapshotLoaded,
+            case .noStrongbox = UnlockCoordinatorV2.bootState() {
+                // Single-wallet restore on a fresh install: use
+                // Part 6's atomic createNewStrongboxWithInitialWallet
+                // so the strongbox + first wallet land in the same
+                // slot write. Closes UNIFIED-D004 — a power-cut
+                // between the historical createNewStrongbox +
+                // appendWallet pair could leave an empty-wallet
+                // strongbox the user trusted as restored.
+                let wallet = StrongboxPayload.Wallet(
+                    idx: 0,
+                    address: candidate.address,
+                    encryptedSeed: reencrypted,
+                    hasSeed: true)
+                try UnlockCoordinatorV2.createNewStrongboxWithInitialWallet(
+                    password: strongboxWritePw,
+                    initialWallet: wallet,
+                    onPhase: onPhase)
+                idx = 0
+            } else {
+                if !Strongbox.shared.isSnapshotLoaded {
+                    try Self.bootstrapOrUnlock(password: strongboxWritePw,
+                        onPhase: onPhase)
+                    // The strongbox was just unlocked, so the
+                    // address-index map now reflects whatever was
+                    // already on disk. Re-check the dedupe gate
+                    // here because we couldn't run it up-top while
+                    // locked - importing a wallet that's already
+                    // a slot would silently create a duplicate.
+                    if Strongbox.shared.index(forAddress: candidate.address) != nil {
+                        return .alreadyExists
+                    }
+                }
+                idx = try UnlockCoordinatorV2.appendWallet(
+                    address: candidate.address,
+                    encryptedSeed: reencrypted,
+                    hasSeed: true,
+                    password: strongboxWritePw,
+                    onPhase: onPhase)
+            }
             // Update the current-wallet pointer so the wallets list
             // / main strip / Receive screen open to the imported
-            // wallet without a relaunch.
-            PrefConnect.shared.writeInt(
-                PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+            // wallet without a relaunch. Throwing setter (Part 5);
+            // a flush failure here downgrades to "next launch opens
+            // the previous wallet" — recoverable, not fatal.
+            do {
+                try PrefConnect.shared.writeInt(
+                    PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+            } catch {
+                Logger.warn(category: "PREFS_FLUSH_FAIL",
+                    "WALLET_CURRENT_ADDRESS_INDEX_KEY: \(error)")
+            }
             // Shared brute-force counter is reset
             // on a confirmed-correct backup password (we got far
             // enough to derive a wallet from the recovered seed).
@@ -542,13 +582,43 @@ public final class RestoreFlow {
     /// post-restore strongbox is consistent regardless of whether
     /// the user is restoring onto a fresh install or adding a
     /// recovered wallet to an existing strongbox.
-    private static func bootstrapOrUnlock(password: String) throws {
-        if Strongbox.shared.isSnapshotLoaded { return }
+    /// What it closes:
+    ///   The "wrong password silently accepted" bug on the
+    ///   restore-from-seed onboarding path. The historical shape
+    ///   was `if Strongbox.shared.isSnapshotLoaded { return }` at
+    ///   the very top — which short-circuited to "success" when
+    ///   the snapshot was already loaded by a previous restore
+    ///   step. Re-entering the restore flow with a different
+    ///   password (or going back-then-Next from the confirmWallet
+    ///   step) silently re-sealed the next slot under a
+    ///   mismatched password, bricking the wallet.
+    /// Why this shape (verify-on-snapshot-loaded):
+    ///   When the snapshot is already loaded we route through
+    ///   the read-only `UnlockCoordinatorV2.verifyPassword` which
+    ///   AEAD-opens `passwordWrap` and signals the brute-force
+    ///   limiter, but does not re-install the snapshot or bump
+    ///   the rollback counter (both of which are unsafe against
+    ///   a live wallet — see verifyPassword's docstring).
+    /// Cross-references:
+    ///   - `UnlockCoordinatorV2.verifyPassword(_:)`.
+    ///   - `HomeWalletViewController.bootstrapOrUnlock` for the
+    ///     matching change on the new-wallet side.
+    private static func bootstrapOrUnlock(password: String,
+        onPhase: UnlockCoordinatorV2.WriteVerifyPhaseCallback? = nil) throws {
         switch UnlockCoordinatorV2.bootState() {
             case .noStrongbox:
-            try UnlockCoordinatorV2.createNewStrongbox(password: password)
+            try UnlockCoordinatorV2.createNewStrongbox(
+                password: password, onPhase: onPhase)
             case .strongboxPresent:
-            try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(password)
+            if Strongbox.shared.isSnapshotLoaded {
+                // Snapshot loaded by a previous restore step;
+                // verify the password against the on-disk
+                // `passwordWrap` without re-installing the
+                // snapshot or bumping the rollback counter.
+                try UnlockCoordinatorV2.verifyPassword(password)
+            } else {
+                try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(password)
+            }
             case .tampered(let why):
             throw UnlockCoordinatorV2Error.tamperDetected(why)
         }
