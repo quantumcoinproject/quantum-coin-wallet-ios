@@ -665,6 +665,100 @@ final class SecurityFixesTests: XCTestCase {
             + "status string (Part 3e/3f / UNIFIED-D010).")
     }
 
+    /// `writeAndVerifyBytes` round-trip: after the call returns,
+    /// the slot file MUST contain the exact bytes the caller
+    /// asked to write. The byte-compare happens inside the
+    /// writer's verify closure BEFORE the rename, so a verify
+    /// failure would have aborted the call and left the slot
+    /// untouched.
+    func testAtomicSlotWriterWriteAndVerifyBytesRoundTrip() throws {
+        let writer = AtomicSlotWriter.shared
+        let slot = AtomicSlotWriter.Slot.B
+        let original = try writer.read(slot: slot)
+        defer {
+            if let original = original {
+                _ = try? writer.write(original, to: slot)
+            } else {
+                let url = writer.path(for: slot)
+                try? FileManager.default.removeItem(at: url)
+            }
+            writer.cleanupTempFiles()
+        }
+        let payload = Data("verify-bytes-roundtrip-\(Date().timeIntervalSince1970)".utf8)
+        try writer.writeAndVerifyBytes(payload, to: slot)
+        let readBack = try writer.read(slot: slot)
+        XCTAssertEqual(readBack, payload,
+            "writeAndVerifyBytes MUST land the exact bytes on "
+            + "disk; the internal byte-compare pass guarantees a "
+            + "promotion-without-mismatch.")
+    }
+
+    /// `writeAndVerifyBytes` is the wire used by the re-mirror
+    /// path. A verify-throw inside the writer (which the byte-
+    /// compare layer does on a mismatch) MUST leave the previous-
+    /// good slot intact. Pins the same "verify-before-promote"
+    /// invariant the deep-verify codec test pins, but for the
+    /// re-mirror caller's surface.
+    func testAtomicSlotWriterWriteAndVerifyBytesAbortsOnByteMismatch() throws {
+        let writer = AtomicSlotWriter.shared
+        let slot = AtomicSlotWriter.Slot.B
+        let original = try writer.read(slot: slot)
+        defer {
+            if let original = original {
+                _ = try? writer.write(original, to: slot)
+            } else {
+                let url = writer.path(for: slot)
+                try? FileManager.default.removeItem(at: url)
+            }
+            writer.cleanupTempFiles()
+        }
+        // Seed a baseline that must survive the failed write.
+        let baseline = Data("verify-bytes-baseline-\(Date().timeIntervalSince1970)".utf8)
+        try writer.write(baseline, to: slot)
+
+        // Force a byte-mismatch by routing through writeAndVerify
+        // with a verify closure that throws .verifyByteMismatch
+        // — the same throw the writeAndVerifyBytes helper raises
+        // when its internal byte-compare fails. The writer MUST
+        // leave the live slot untouched.
+        let attempted = Data("verify-bytes-attempted".utf8)
+        XCTAssertThrowsError(try writer.writeAndVerify(attempted, to: slot,
+                verify: { staged in
+                    throw AtomicSlotWriterError.verifyByteMismatch(
+                        path: writer.path(for: slot).path,
+                        expectedLength: attempted.count,
+                        actualLength: staged.count)
+                })) { err in
+            guard case AtomicSlotWriterError.verifyByteMismatch = err else {
+                XCTFail("expected verifyByteMismatch, got \(err)")
+                return
+            }
+        }
+
+        let surviving = try writer.read(slot: slot)
+        XCTAssertEqual(surviving, baseline,
+            "byte-mismatch verify-throw MUST leave the previous-"
+            + "good slot bytes intact; a regression that promotes "
+            + "before byte-compare would surface here as the "
+            + "`attempted` payload overwriting the baseline.")
+    }
+
+    /// Pins the human-readable error description for the new
+    /// `verifyByteMismatch` case so log triage can pattern-match
+    /// on a stable string. A regression that drops the byte-
+    /// length numbers would mask a partial-write failure mode.
+    func testAtomicSlotWriterVerifyByteMismatchErrorDescription() {
+        let err = AtomicSlotWriterError.verifyByteMismatch(
+            path: "/tmp/foo.json", expectedLength: 1024, actualLength: 768)
+        XCTAssertEqual(
+            "\(err)",
+            "AtomicSlotWriter: verify byte-mismatch at /tmp/foo.json "
+            + "(expected=1024B actual=768B)",
+            "verifyByteMismatch description MUST surface both "
+            + "lengths so a partial-write triage can distinguish "
+            + "a short read from a same-length corruption.")
+    }
+
     // MARK: - Durability: StrongboxRedundancyState (Part 10 / 12 / D003 / D012)
 
     /// `markSingleSlot` sets `singleSlot=true`; `markRedundant`

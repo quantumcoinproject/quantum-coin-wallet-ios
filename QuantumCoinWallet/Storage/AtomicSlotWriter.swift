@@ -122,6 +122,12 @@ public enum AtomicSlotWriterError: Error, CustomStringConvertible {
     case syncFailed(path: String, errno: Int32)
     case renameFailed(from: String, to: String, errno: Int32)
     case protectionClassFailed(path: String, underlying: String)
+    /// Raised by `writeAndVerifyBytes` when the staged file's
+    /// re-read bytes do not byte-equal the bytes the caller asked
+    /// to write. Carries the expected and actual lengths for log
+    /// triage; the actual bytes are NOT included to avoid leaking
+    /// ciphertext into log sinks.
+    case verifyByteMismatch(path: String, expectedLength: Int, actualLength: Int)
 
     public var description: String {
         switch self {
@@ -135,6 +141,9 @@ public enum AtomicSlotWriterError: Error, CustomStringConvertible {
             return "AtomicSlotWriter: rename(\(f) -> \(t)) failed errno=\(e)"
             case .protectionClassFailed(let p, let u):
             return "AtomicSlotWriter: setAttributes(\(p)) failed: \(u)"
+            case .verifyByteMismatch(let p, let e, let a):
+            return "AtomicSlotWriter: verify byte-mismatch at \(p) "
+                + "(expected=\(e)B actual=\(a)B)"
         }
     }
 }
@@ -223,15 +232,56 @@ public final class AtomicSlotWriter {
 
     // MARK: - Public write
 
-    /// Atomically + durably write `bytes` to `slot`. After this
-    /// returns successfully the file is committed to flash with
-    /// `complete` protection class. Equivalent to
-    /// `writeAndVerify(bytes, to: slot, verify: { _ in })` — kept
-    /// for callers that don't need the deep-verify hook (e.g. the
-    /// re-mirror path in the codec, which just copies the
-    /// already-verified previous-good slot).
+    /// Atomically + durably write `bytes` to `slot`, then re-read
+    /// the staged file and BYTE-COMPARE it against `bytes` before
+    /// renaming into the live slot. This is the right primitive
+    /// for "I already have the canonical bytes I want on disk" —
+    /// e.g. the re-mirror path that copies an already-MAC-verified
+    /// surviving slot to the missing one.
+    /// What it closes:
+    ///   The historical `write(_:to:)` shape was `writeAndVerify(...,
+    ///   verify: { _ in })` — i.e. it wrote, F_FULLFSYNC'd, and
+    ///   re-read uncached but threw the re-read bytes away. A NAND
+    ///   bit-flip during the write window therefore landed silently
+    ///   in the live slot. The byte-compare here closes that gap
+    ///   for callers that don't need a schema-aware verify but DO
+    ///   want write-then-verify-then-promote.
+    /// Why this shape (byte-compare in the writer, not the caller):
+    ///   The writer already does the uncached re-read, so the
+    ///   compare is a single allocation-free Data == Data over the
+    ///   already-loaded staged buffer. Pushing it into every caller
+    ///   would duplicate the boilerplate and risk forgotten sites.
+    /// Tradeoffs:
+    ///   Adds a Data == Data over up to ~32 KiB on every write.
+    ///   That is below 1 ms on every iPhone in the deployment
+    ///   target window; well below the F_FULLFSYNC cost the write
+    ///   already pays.
+    /// Cross-references:
+    ///   - `StrongboxFileCodec.scheduleReMirror` for the re-mirror
+    ///     caller that uses this helper.
+    ///   - `writeAndVerify` for the deep-verify variant used by
+    ///     `writeNewGeneration`.
+    public func writeAndVerifyBytes(_ bytes: Data, to slot: Slot,
+        onPhase: ((WriteVerifyPhase) -> Void)? = nil) throws {
+        let finalPath = path(for: slot).path
+        try writeAndVerify(bytes, to: slot,
+            verify: { staged in
+                guard staged == bytes else {
+                    throw AtomicSlotWriterError.verifyByteMismatch(
+                        path: finalPath,
+                        expectedLength: bytes.count,
+                        actualLength: staged.count)
+                }
+            },
+            onPhase: onPhase)
+    }
+
+    /// Compatibility shim. Forwards to `writeAndVerifyBytes` so
+    /// every legacy `write(_:to:)` caller now also gets the read-
+    /// back-and-byte-compare layer. Retained as a separate name
+    /// only to minimise churn in call sites.
     public func write(_ bytes: Data, to slot: Slot) throws {
-        try writeAndVerify(bytes, to: slot, verify: { _ in })
+        try writeAndVerifyBytes(bytes, to: slot)
     }
 
     /// Atomically + durably write `bytes` to `slot`, then re-read

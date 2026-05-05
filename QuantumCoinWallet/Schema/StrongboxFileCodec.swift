@@ -818,7 +818,21 @@ public enum StrongboxFileCodec {
                 return
             }
             do {
-                try AtomicSlotWriter.shared.write(bytes, to: slot)
+                // writeAndVerifyBytes does the same atomic-slot
+                // pipeline as `write` PLUS a read-back-and-byte-
+                // compare against the input bytes. The source bytes
+                // (`bytes`) were just produced by re-encoding a
+                // surviving slot whose MAC + generation already
+                // passed `readWinner`, so the only thing the byte-
+                // compare adds here is "and the journey from RAM
+                // through the page cache to flash didn't mutate a
+                // bit". The marginal cost is one Data == Data over
+                // up to ~32 KiB; the marginal value is preventing
+                // a silent NAND bit-flip in the missing slot from
+                // becoming the user's only on-disk copy after the
+                // surviving slot fails on the next read.
+                try AtomicSlotWriter.shared.writeAndVerifyBytes(
+                    bytes, to: slot)
                 // Re-mirror succeeded; we now have two valid slots.
                 // Clear any stale single-slot flag from an earlier
                 // failed re-mirror in this process.
