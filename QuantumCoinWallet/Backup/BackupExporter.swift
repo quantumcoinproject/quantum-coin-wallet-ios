@@ -122,7 +122,7 @@ public enum BackupExporter {
     /// `extractSeedWords(fromDecryptEnvelope:)` and
     /// `extractRecoveredAddress(fromDecryptEnvelope:)` which parsed
     /// `JsBridge.decryptWalletJson`'s legacy JSON envelope.
-    /// QCW-010 moved that helper into `JsBridge.WalletEnvelope`
+    /// That helper was moved into `JsBridge.WalletEnvelope`
     /// (a Swift struct with `Data`-typed key material), so callers
     /// now read `.seedWords` / `.address` directly off the
     /// envelope without parsing JSON, and the binary key bytes

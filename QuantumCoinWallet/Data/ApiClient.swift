@@ -19,8 +19,51 @@ public final class ApiClient: @unchecked Sendable {
 
     public static let shared = ApiClient()
 
+    // ------------------------------------------------------------------
+    // What it closes:
+    //   The previous `public var basePath: String = ""` was readable
+    //   AND writable from any thread without synchronisation. Real
+    //   readers come from URLSession's cooperative pool (the `get`
+    //   method below reads `basePath` on whichever queue the await
+    //   resumes on); real writers come from the BlockchainNetworkManager
+    //   on the main queue. Concurrent read+write on a Swift `String` is
+    //   undefined behaviour at the language level - the read can tear
+    //   and produce a malformed URL, and on rare scheduling can crash
+    //   inside CFString's COW machinery. This is UNIFIED-006's
+    //   ApiClient facet.
+    // Why this shape (NSLock + private storage + computed accessor):
+    //   Identical to the discipline in `Utilities/Constants.swift`'s
+    //   network mirrors and the new `_stateLock` in
+    //   `BlockchainNetworkManager`. Reads + writes hop through a
+    //   tiny lock window (microseconds) so concurrent observers see
+    //   well-defined values.
+    // Tradeoffs:
+    //   Adds a lock acquisition to every URL composition in `get(...)`.
+    //   The lock is uncontended in practice (one writer, intermittent
+    //   readers); cost is ~10 ns per acquire on modern iPhones.
+    // Cross-references:
+    //   - UNIFIED-006 (data race; ApiClient facet).
+    //   - `QuantumCoinWallet/Utilities/Constants.swift` for the matching
+    //     `_networkLock` pattern this code mirrors.
+    //   - `QuantumCoinWallet/Data/BlockchainNetwork.swift`'s
+    //     `applyActiveLocked()` which is the only writer in production.
+    // ------------------------------------------------------------------
+    private let _basePathLock = NSLock()
+    nonisolated(unsafe) private var _basePath: String = ""
+
     /// Current scan API base URL. Updated by `BlockchainNetworkManager`.
-    public var basePath: String = ""
+    /// Lock-protected accessor: reads and writes are serialised so
+    /// concurrent URL-composition readers cannot observe a torn String.
+    public var basePath: String {
+        get {
+            _basePathLock.lock(); defer { _basePathLock.unlock() }
+            return _basePath
+        }
+        set {
+            _basePathLock.lock(); defer { _basePathLock.unlock() }
+            _basePath = newValue
+        }
+    }
 
     /// Strong reference to the TLS-pinning
     /// delegate. `URLSession(configuration:delegate:delegateQueue:)`

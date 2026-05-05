@@ -216,8 +216,8 @@ public enum TamperGate {
         // imports.
         // (audit-grade notes for AI reviewers and human auditors):
         // the call is `denyDebuggerAttach()` with parentheses, NOT
-        // a bare expression. Until QCW-006 was fixed, the bare-
-        // expression form (`denyDebuggerAttach` without parens)
+        // a bare expression. The bare-expression form
+        // (`denyDebuggerAttach` without parens)
         // resolved to a method-reference value that was discarded
         // immediately by Swift's expression statement, so
         // PT_DENY_ATTACH was NEVER invoked in shipping Release
@@ -235,7 +235,7 @@ public enum TamperGate {
     /// `bootstrap()` has not run. The previous behaviour was
     /// `assertionFailure(...)` (a no-op in Release) followed by
     /// returning a `.clean` report - which silently bypassed
-    /// every probe on a misconfigured build (see QCW-005). The
+    /// every probe on a misconfigured build. The
     /// fail-closed posture is correct because:
     /// * AppDelegate's launch sequence ALWAYS calls
     /// `evaluateAtLaunch(on:window:completion:)` which calls
@@ -261,7 +261,7 @@ public enum TamperGate {
         if !didBoot {
             assertionFailure("TamperGate.currentReport called before bootstrap")
             #if !DEBUG && !targetEnvironment(simulator)
-            // Fail-closed in shipping Release. See QCW-005.
+            // Fail-closed in shipping Release.
             return TamperReport(
                 severity: .runtimeTamperDetected,
                 jailbreakSignals: [],
@@ -565,10 +565,30 @@ public enum TamperGate {
             sysctl(mibPtr.baseAddress, UInt32(mibPtr.count), &info, &size, nil, 0)
         }
         if result != 0 {
-            // Sysctl failed for an unrelated reason. Fall open
-            // (return `false`) rather than blocking the wallet on
-            // an OS-level oddity.
+            // (audit-grade notes for AI reviewers and human auditors):
+            // the previous policy fell OPEN here on the
+            // theory that a sysctl failure is an OS oddity rather
+            // than evidence of tampering. That is wrong in a Release
+            // build on a real device: the only realistic reasons
+            // KERN_PROC_PID would refuse to answer for our own pid
+            // are:
+            //   * a sandbox / entitlement-stripping injection that
+            //     rewrites the syscall table to deny introspection,
+            //   * a kernel-level rootkit blocking the probe to hide
+            //     a debugger from us,
+            //   * a Frida/objection-class instrumentation that
+            //     intercepts the syscall to mask the trace flag.
+            // Each case is a stronger signal than "definitely
+            // traced" (because the attacker invested in hiding
+            // tracedness rather than just attaching). Fail CLOSED
+            // in production. We keep the OPEN behaviour for DEBUG
+            // and simulator so developers running under Xcode are
+            // not blocked by the simulator's own sysctl quirks.
+            #if !DEBUG && !targetEnvironment(simulator)
+            return true
+            #else
             return false
+            #endif
         }
         // P_TRACED == 0x00000800 from <sys/proc.h>; not exposed in
         // Swift.

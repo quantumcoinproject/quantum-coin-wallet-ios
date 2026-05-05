@@ -109,6 +109,21 @@ public final class Localization {
     public func getWaitWalletOpenByLangValues() -> String { langString("waitWalletOpen") }
     public func getWaitUnlockByLangValues() -> String { langString("waitUnlock") }
     public func getWaitOpeningPickerByLangValues() -> String { langString("wait-opening-picker") }
+    /// Secondary status string shown by `WaitDialogViewController.setStatus`
+    /// during the integrity-check window of a strongbox slot write.
+    /// The wait dialog's primary "Please wait..." message stays visible
+    /// the entire time; the secondary slot toggles to "Verifying..."
+    /// during the verify pass and clears on promote.
+    public func getStatusVerifyingByLangValues() -> String { langString("status-verifying") }
+    /// Banner shown by the unlock dialog when
+    /// `StrongboxRedundancyState.singleSlot` is true (the previous
+    /// unlock or re-mirror pass observed only one valid slot file
+    /// and recovered from a backup slot). The user is gently
+    /// nudged to create a fresh `.wallet` backup soon, so a second
+    /// silent corruption does not destroy the last good copy.
+    public func getStrongboxDegradedBannerByLangValues() -> String {
+        langString("strongbox-degraded-banner")
+    }
     public func getDpscanByLangValues() -> String { langString("dpscan") }
     public func getAddressByLangValues() -> String { langString("address") }
     public func getCoinsByLangValues() -> String { langString("coins") }

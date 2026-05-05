@@ -30,7 +30,7 @@
 // §2.2 Extract followed by §2.3 Expand. Apple's
 // `HKDF.deriveKey(...)` performs both phases internally;
 // the function name was renamed from `hkdfExpand` to
-// `hkdfExtractAndExpand` (QCW-022) to make the audit
+// `hkdfExtractAndExpand` to make the audit
 // invariant ("this function does NOT skip Extract") visible
 // at every call site rather than buried in a doc comment.
 // For our IKM (the 32-byte AES-GCM `mainKey`), Extract is
@@ -97,7 +97,7 @@ public enum Mac {
     /// the function name explicitly says ExtractAndExpand because
     /// `HKDF.deriveKey(...)` performs both RFC 5869 §2.2 Extract
     /// and §2.3 Expand internally; the previous name `hkdfExpand`
-    /// was technically misleading (see QCW-022). `salt` and
+    /// was technically misleading. `salt` and
     /// `info` are the standard HKDF parameters:
     /// - `salt` adds a domain-separation tag so two
     /// derivations from the same IKM but different salt

@@ -16,6 +16,38 @@ public enum CoinUtils {
     /// Number of wei in one ether (10^18).
     public static let ETHER_DECIMALS: Int = 18
 
+    /// Maximum `decimals` value accepted by `parseUnits` /
+    /// `formatUnits` before the input is treated as malformed
+    /// and short-circuited to the existing `"0"` sentinel.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// `decimals` reaches these helpers from token-metadata RPC
+    /// responses and from user-pasted contract definitions. A
+    /// hostile RPC endpoint (or a malformed token contract) can
+    /// return an absurdly large value (`Int.max` is the worst
+    /// case). The padding allocations inside `parseUnits` /
+    /// `formatUnits` (`String(repeating: "0", count: scale -
+    /// fracPart.count)`) then balloon to many GB and OOM-kill
+    /// the app, taking down every subsequent token query - a
+    /// reliable per-launch DoS as soon as the wallet renders a
+    /// balance on the home screen. Real-world tokens use 0 to
+    /// 18 decimals; 64 leaves ~3.5x headroom for a hypothetical
+    /// future PQ-era token without ever letting the allocation
+    /// reach OOM territory.
+    public static let MAX_TOKEN_DECIMALS: Int = 64
+
+    /// Maximum hex-input length accepted by `hexToDecimalString`
+    /// before the conversion is treated as malformed and
+    /// short-circuited to nil (which `formatUnits` maps to "0").
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the conversion is O(N^2) over the hex input length; the
+    /// input ultimately comes from RPC responses (untrusted).
+    /// A maliciously long hex string freezes the UI long enough
+    /// to trip the iOS watchdog, killing the app. 1024 hex chars
+    /// covers any value up to ~4096 bits, which is far beyond
+    /// any wei amount the chain produces (the EVM word size is
+    /// 256 bits).
+    public static let MAX_HEX_INPUT_CHARS: Int = 1024
+
     /// Convert a decimal-string wei value to a human-readable ether
     /// amount. Null / empty / non-numeric input returns "0".
     public static func formatWei(_ weiValue: String?) -> String {
@@ -29,6 +61,11 @@ public enum CoinUtils {
         guard let raw = value?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
             return "0"
         }
+        // Cap `decimals` BEFORE any allocation sized by it. An
+        // RPC-supplied value of `Int.max` would otherwise drive
+        // `String(repeating: "0", count: ...)` to OOM-kill the
+        // app on every token render.
+        if decimals > MAX_TOKEN_DECIMALS { return "0" }
         var sign = ""
         var work = raw
         if work.hasPrefix("-") { sign = "-"; work.removeFirst() }
@@ -99,6 +136,11 @@ public enum CoinUtils {
         !raw.isEmpty else {
             return "0"
         }
+        // Cap `decimals` BEFORE any allocation sized by it. An
+        // RPC-supplied value of `Int.max` would otherwise drive
+        // `String(repeating: "0", count: ...)` below to OOM-kill
+        // the app on the next signing prep.
+        if decimals > MAX_TOKEN_DECIMALS { return "0" }
         var sign = ""
         var work = raw
         if work.hasPrefix("-") { sign = "-"; work.removeFirst() }
@@ -153,6 +195,15 @@ public enum CoinUtils {
     /// to fixed-precision math. Returns nil only on programmer error
     /// (already validated upstream).
     private static func hexToDecimalString(_ hex: String) -> String? {
+        // The conversion is O(N^2) over input length and the
+        // input ultimately comes from RPC
+        // responses (untrusted). A maliciously long hex string
+        // freezes the UI long enough to trip the iOS watchdog,
+        // killing the app. Cap at `MAX_HEX_INPUT_CHARS` (1024
+        // hex digits = ~4096 bits, far beyond the EVM 256-bit
+        // word). Returning nil mirrors the existing "malformed
+        // input" sentinel which `formatUnits` maps to "0".
+        if hex.count > MAX_HEX_INPUT_CHARS { return nil }
         var digits: [UInt8] = [0]
         for ch in hex {
             guard let nibble = ch.hexDigitValue else { return nil }

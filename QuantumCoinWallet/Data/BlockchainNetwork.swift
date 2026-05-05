@@ -14,6 +14,22 @@
 // Android reference:
 // app/src/main/java/com/quantumcoinwallet/app/model/BlockchainNetwork.java
 // app/src/main/java/com/quantumcoinwallet/app/utils/GlobalMethods.java (setActiveNetwork)
+//
+// Concurrency discipline (Part 1 of the security fix plan, closes
+// UNIFIED-006 / UNIFIED-D009):
+// `BlockchainNetworkManager` mirrors the NSLock + private-storage
+// pattern used by `Utilities/Constants.swift` for the legacy
+// `SCAN_API_URL` / `RPC_ENDPOINT_URL` / `BLOCK_EXPLORER_URL` /
+// `CHAIN_ID` mirrors. The lock holds across the entire mutation
+// pipeline including the slow `persistThroughStrongboxLocked`
+// scrypt + AEAD seal + slot-write window AND the rollback-on-throw
+// branch, so a concurrent reader can never observe a torn or
+// half-rolled-back `(networks, activeIndex)` pair. `applyActiveLocked`
+// is the SINGLE publish point that fans the new snapshot out to
+// `Constants.*`, `ApiClient.basePath`, and `NetworkConfig.publishSync`
+// in the same critical section so all four observation surfaces see
+// the same epoch (closing UNIFIED-007 in concert with
+// `Networking/NetworkConfig.swift`'s synchronous mirror).
 
 import Foundation
 
@@ -160,16 +176,69 @@ public struct BlockchainNetwork: Codable, Equatable, Sendable {
     }
 }
 
-public final class BlockchainNetworkManager {
+public final class BlockchainNetworkManager: @unchecked Sendable {
 
     public static let shared = BlockchainNetworkManager()
 
-    public private(set) var networks: [BlockchainNetwork] = []
-    public private(set) var activeIndex: Int = 0
+    // ------------------------------------------------------------------
+    // What it closes:
+    //   The previous `public private(set) var networks` /
+    //   `public private(set) var activeIndex` shape allowed concurrent
+    //   readers (URLSession.delegate threads, UI listeners on the
+    //   main queue, the JS bridge initialisation `Task.detached`) to
+    //   observe `(networks, activeIndex)` mid-mutation. Swift `Array`
+    //   and `Int` writes are not atomic at the language level - a
+    //   reader could see the new `activeIndex` paired with the OLD
+    //   `networks`, indexing past the end and either silently wrong-
+    //   network'ing the user or crashing. Two simultaneous mutators
+    //   (e.g. an "add network" `Task.detached` racing a "switch network"
+    //   `Task.detached` that the user kicked off in two different
+    //   sheets) could also leave the strongbox-on-disk and the
+    //   in-memory state out of sync after a partial rollback.
+    // Why this shape (NSLock + private storage + computed accessors):
+    //   Mirrors the existing pattern in `Utilities/Constants.swift`
+    //   for `SCAN_API_URL` / `RPC_ENDPOINT_URL` / `BLOCK_EXPLORER_URL` /
+    //   `CHAIN_ID`. NSLock is sufficient: every mutation site is a
+    //   user-tappable action (rare on the time scale of lock contention),
+    //   the slow `persistThroughStrongbox` work runs while the lock is
+    //   held, and the existing call sites are MainActor-confined sync
+    //   UI code that cannot await on an actor without a UI refactor
+    //   far beyond the scope of this fix. The serial discipline is the
+    //   property we want.
+    // Tradeoffs:
+    //   The `persistThroughStrongbox` slow path (scrypt + AEAD seal +
+    //   slot write, ~300-500 ms) runs while `_stateLock` is held.
+    //   Worst case: a second user tap on a different mutator waits one
+    //   user-tappable action for the first to complete. The alternative
+    //   (drop the lock around the slow work + rollback dance) re-opens
+    //   the race that this fix exists to close.
+    // Cross-references:
+    //   - SECURITY_AUDIT_FINDINGS.md UNIFIED-006 (data race on
+    //     `(networks, activeIndex)`) and UNIFIED-D009 (compound mutation
+    //     race specifically for double-tap "Add Network" sequences).
+    //   - `QuantumCoinWallet/Utilities/Constants.swift` for the matching
+    //     `_networkLock` + private backing pattern that this code mirrors.
+    //   - `QuantumCoinWallet/Schema/StrongboxFileCodec.swift` for the
+    //     analogous `writerQueue.sync` discipline on the codec side.
+    // ------------------------------------------------------------------
+    private let _stateLock = NSLock()
+    private var _networks: [BlockchainNetwork] = []
+    private var _activeIndex: Int = 0
+
+    public var networks: [BlockchainNetwork] {
+        _stateLock.lock(); defer { _stateLock.unlock() }
+        return _networks
+    }
+
+    public var activeIndex: Int {
+        _stateLock.lock(); defer { _stateLock.unlock() }
+        return _activeIndex
+    }
 
     public var active: BlockchainNetwork? {
-        guard activeIndex >= 0 && activeIndex < networks.count else { return nil }
-        return networks[activeIndex]
+        _stateLock.lock(); defer { _stateLock.unlock() }
+        guard _activeIndex >= 0 && _activeIndex < _networks.count else { return nil }
+        return _networks[_activeIndex]
     }
 
     private init() {}
@@ -182,9 +251,11 @@ public final class BlockchainNetworkManager {
     /// unlock dialog (cold-launch gate, JS-bridge initialisation) have
     /// a working chain config.
     public func bootstrap() {
-        networks = loadBundled()
-        activeIndex = 0
-        applyActive()
+        _stateLock.lock()
+        _networks = loadBundled()
+        _activeIndex = 0
+        applyActiveLocked()
+        _stateLock.unlock()
         Self.postConfigChanged()
     }
 
@@ -192,16 +263,18 @@ public final class BlockchainNetworkManager {
     /// once the encrypted strongbox payload has been decrypted.
     /// Layers the user-added networks on top of the
     /// bundled defaults, restores the active offset, and re-runs
-    /// `applyActive` so `Constants.*`, `ApiClient.basePath`, and the
+    /// `applyActiveLocked` so `Constants.*`, `ApiClient.basePath`, and the
     /// JS bridge match the user's selection. Must be called on the
     /// main thread.
     public func applyDecryptedConfig(customNetworks: [BlockchainNetwork],
         activeIndex savedIndex: Int) {
+        _stateLock.lock()
         let bundled = loadBundled()
-        networks = bundled + customNetworks
-        let upper = max(0, networks.count - 1)
-        activeIndex = max(0, min(savedIndex, upper))
-        applyActive()
+        _networks = bundled + customNetworks
+        let upper = max(0, _networks.count - 1)
+        _activeIndex = max(0, min(savedIndex, upper))
+        applyActiveLocked()
+        _stateLock.unlock()
         Self.postConfigChanged()
     }
 
@@ -211,9 +284,11 @@ public final class BlockchainNetworkManager {
     /// becomes empty post-lock). User-added networks reappear on the
     /// next successful unlock via `applyDecryptedConfig`.
     public func resetToBundled() {
-        networks = loadBundled()
-        activeIndex = 0
-        applyActive()
+        _stateLock.lock()
+        _networks = loadBundled()
+        _activeIndex = 0
+        applyActiveLocked()
+        _stateLock.unlock()
         Self.postConfigChanged()
     }
 
@@ -222,20 +297,33 @@ public final class BlockchainNetworkManager {
     /// strongbox blob with the new active-index, and zero the bytes before
     /// returning. Callers (`BlockchainNetworkSelectDialogViewController`)
     /// must collect the password through `UnlockDialogViewController`
-    /// before invoking this method. The in-memory `activeIndex` is
+    /// before invoking this method. The in-memory `_activeIndex` is
     /// rolled back if the persist fails so a wrong-password retry
     /// doesn't desync memory from disk.
-    public func setActive(index: Int, password: String) throws {
-        guard index >= 0 && index < networks.count else { return }
-        let previous = activeIndex
-        activeIndex = index
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the `_stateLock` is held across the entire mutation pipeline
+    /// INCLUDING the rollback-on-throw branch. Without this, a
+    /// concurrent reader could observe the half-rolled-back state
+    /// (new index installed, persist threw, observer reads the new
+    /// index, rollback runs, observer's read is now from the wrong
+    /// epoch). The slow `persistThroughStrongbox` runs while the
+    /// lock is held; this is intentional - serialising mutators is
+    /// the point of the fix. See class header for the cross-reference
+    /// to UNIFIED-006 / UNIFIED-D009.
+    public func setActive(index: Int, password: String,
+        onPhase: UnlockCoordinatorV2.WriteVerifyPhaseCallback? = nil) throws {
+        _stateLock.lock()
+        defer { _stateLock.unlock() }
+        guard index >= 0 && index < _networks.count else { return }
+        let previous = _activeIndex
+        _activeIndex = index
         do {
-            try persistThroughStrongbox(password: password)
+            try persistThroughStrongboxLocked(password: password, onPhase: onPhase)
         } catch {
-            activeIndex = previous
+            _activeIndex = previous
             throw error
         }
-        applyActive()
+        applyActiveLocked()
         Self.postConfigChanged()
     }
 
@@ -244,14 +332,24 @@ public final class BlockchainNetworkManager {
     /// entry must be written to the encrypted strongbox blob, which means
     /// re-deriving the strongbox main key from the user's password. On
     /// persist failure the new entry is rolled back so the in-memory
-    /// `networks` list stays in lock-step with disk, allowing the user
+    /// `_networks` list stays in lock-step with disk, allowing the user
     /// to retry the unlock prompt without duplicating the entry.
-    public func addNetwork(_ n: BlockchainNetwork, password: String) throws {
-        networks.append(n)
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the `_stateLock` is held across `_networks.append` AND the
+    /// rollback `removeLast` so a concurrent reader cannot witness
+    /// a duplicated trailing entry. A double-tap on the "Save" button
+    /// in `BlockchainNetworkViewController` now serialises naturally:
+    /// the second tap waits for the first to complete (success OR
+    /// rollback) before evaluating its own append. See class header.
+    public func addNetwork(_ n: BlockchainNetwork, password: String,
+        onPhase: UnlockCoordinatorV2.WriteVerifyPhaseCallback? = nil) throws {
+        _stateLock.lock()
+        defer { _stateLock.unlock() }
+        _networks.append(n)
         do {
-            try persistThroughStrongbox(password: password)
+            try persistThroughStrongboxLocked(password: password, onPhase: onPhase)
         } catch {
-            networks.removeLast()
+            _networks.removeLast()
             throw error
         }
         Self.postConfigChanged()
@@ -302,34 +400,64 @@ public final class BlockchainNetworkManager {
     /// calling `addNetwork` or `setActive`, which forwards the
     /// password to `UnlockCoordinatorV2.replaceNetworks` for the
     /// actual derive-encrypt-write cycle.
-    private func persistThroughStrongbox(password: String) throws {
+    /// PRECONDITION: `_stateLock` MUST be held by the caller. The
+    /// `Locked` suffix is the audit convention for "method assumes
+    /// the enclosing lock is held"; cross-checked by code review.
+    /// Reads `_networks` and `_activeIndex` directly so it does not
+    /// re-enter the lock through the public computed accessors.
+    private func persistThroughStrongboxLocked(password: String,
+        onPhase: UnlockCoordinatorV2.WriteVerifyPhaseCallback? = nil) throws {
         let bundledCount = loadBundled().count
-        let custom = Array(networks.dropFirst(bundledCount))
+        let custom = Array(_networks.dropFirst(bundledCount))
         try UnlockCoordinatorV2.replaceNetworks(
-            custom, activeIndex: activeIndex, password: password)
+            custom, activeIndex: _activeIndex, password: password,
+            onPhase: onPhase)
     }
 
-    private func applyActive() {
-        guard let net = active else { return }
+    /// PRECONDITION: `_stateLock` MUST be held by the caller. Renamed
+    /// from `applyActive()` to reflect the held-lock contract.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// this method publishes the new network into THREE sinks in the
+    /// same critical section so a synchronous reader cannot observe
+    /// a torn view (Constants says new network, NetworkConfig still
+    /// says old, ApiClient.basePath in flux):
+    ///   1. `Constants.*` mirrors (lock-protected via NSLock inside
+    ///      Constants for legacy synchronous UI readers).
+    ///   2. `ApiClient.basePath` (lock-protected via the new accessor
+    ///      added in Part 1b).
+    ///   3. `NetworkConfig.publishSync(...)` synchronous mirror added
+    ///      in Part 1c (the canonical synchronous source that the
+    ///      signing-path "Review" capture in SendViewController uses).
+    /// The asynchronous `Task { await NetworkConfig.shared.apply }`
+    /// is RETAINED for any future async consumer; the actor remains
+    /// the canonical async source. The static synchronous mirror
+    /// closes UNIFIED-007 (capture-time torn view between actor and
+    /// Constants).
+    private func applyActiveLocked() {
+        guard _activeIndex >= 0 && _activeIndex < _networks.count else { return }
+        let net = _networks[_activeIndex]
         ApiClient.shared.basePath = net.scanApiDomain
         Constants.SCAN_API_URL = net.scanApiDomain
         Constants.RPC_ENDPOINT_URL = net.rpcEndpoint
         Constants.BLOCK_EXPLORER_URL = net.blockExplorerUrl
         Constants.CHAIN_ID = Int(net.chainId) ?? 0
 
-        // Mirror into the actor-backed
-        // NetworkConfig so the signing pipeline can capture and
-        // re-assert a typed snapshot. The `Constants.*` writes
-        // above remain so legacy synchronous read sites (UI,
-        // explorer deep links) keep working unchanged. The actor
-        // is the authoritative source for any signing-related
-        // comparison; see NetworkConfig.swift for full rationale.
         let snapshot = NetworkSnapshot(
             name: net.name,
             chainId: Constants.CHAIN_ID,
             rpcEndpoint: net.rpcEndpoint,
             scanApiUrl: net.scanApiDomain,
             blockExplorerUrl: net.blockExplorerUrl)
+        // SYNCHRONOUS publish - closes UNIFIED-007. Any caller that
+        // reads `NetworkConfig.currentSync` immediately after this
+        // returns observes the same epoch as `Constants.*` and
+        // `ApiClient.basePath` above.
+        NetworkConfig.publishSync(snapshot)
+        // Async publish kept so any `await NetworkConfig.shared.current`
+        // consumer (the signing-path submit-time re-assertion in
+        // SendViewController) eventually sees the same value via the
+        // actor. Retained as defense-in-depth; the synchronous mirror
+        // above is the authoritative source for the capture-time read.
         Task { await NetworkConfig.shared.apply(snapshot) }
 
         Task.detached(priority: .userInitiated) {

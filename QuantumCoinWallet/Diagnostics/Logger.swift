@@ -97,6 +97,24 @@ public enum Logger {
         #endif
     }
 
+    /// DEBUG-only emission of a category-tagged WARNING line. Same
+    /// redaction surface as `debug`; the only difference is the
+    /// `WARN:` prefix so a developer scanning Console.app can
+    /// distinguish a transient fail-then-retry warning (e.g.
+    /// `scheduleReMirror` retry) from routine debug noise.
+    /// In Release this is a no-op like `debug`.
+    public static func warn(category: String,
+        _ message: @autoclosure () -> String,
+        file: StaticString = #file,
+        line: UInt = #line) {
+        #if DEBUG
+        let raw = message()
+        let redacted = redact(raw)
+        let shortFile = ("\(file)" as NSString).lastPathComponent
+        print("WARN: [\(category)] \(shortFile):\(line) \(redacted)")
+        #endif
+    }
+
     // MARK: - Redactor (DEBUG-only)
 
     #if DEBUG

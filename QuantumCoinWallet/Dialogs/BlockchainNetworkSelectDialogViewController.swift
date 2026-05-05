@@ -157,11 +157,17 @@ public final class BlockchainNetworkSelectDialogViewController: ModalDialogViewC
             let wait = WaitDialogViewController(
                 message: Localization.shared.getWaitUnlockByLangValues())
             unlock.present(wait, animated: true)
+            // Phase callback wires the wait-dialog's secondary status
+            // line to "Verifying..." during the integrity-check window
+            // of the strongbox slot write that records the new active
+            // network. Main "Please wait..." stays visible the whole
+            // time. See `WaitDialogViewController.setStatus`.
+            let onPhase = makeVerifyingPhaseHandler(for: wait)
             Task.detached(priority: .userInitiated) { [weak self, weak unlock, weak wait] in
                 var failure: Error? = nil
                 do {
                     try BlockchainNetworkManager.shared.setActive(
-                        index: chosen, password: pw)
+                        index: chosen, password: pw, onPhase: onPhase)
                 } catch {
                     failure = error
                 }
@@ -194,7 +200,7 @@ public final class BlockchainNetworkSelectDialogViewController: ModalDialogViewC
     /// understands the gate is throttling them by design. The
     /// network add / switch path is now rate-limited because
     /// the limiter pre-check + recordFailure live inside
-    /// `UnlockCoordinatorV2.persistSnapshot` (see QCW-002).
+    /// `UnlockCoordinatorV2.persistSnapshot`.
     private func showUnlockError(over unlock: UnlockDialogViewController,
         error: Error?) {
         if let uc = error as? UnlockCoordinatorV2Error,

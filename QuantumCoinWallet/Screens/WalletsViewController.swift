@@ -414,7 +414,18 @@ HomeScreenViewTypeProviding {
     // MARK: - Actions
 
     private func switchActive(toIndex index: Int) {
-        PrefConnect.shared.writeInt(PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, index)
+        // PrefConnect setters are now throwing (Part 5). The current-
+        // wallet pointer is recoverable on next launch from the
+        // strongbox's `currentWalletIndex` field, so a transient flush
+        // failure here downgrades to "user opens to the previous
+        // wallet" rather than data loss. Log + continue.
+        do {
+            try PrefConnect.shared.writeInt(
+                PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, index)
+        } catch {
+            Logger.warn(category: "PREFS_FLUSH_FAIL",
+                "WALLET_CURRENT_ADDRESS_INDEX_KEY: \(error)")
+        }
         (parent as? HomeViewController)?.showMain()
     }
 
@@ -456,7 +467,7 @@ HomeScreenViewTypeProviding {
             dlg.present(wait, animated: true)
             Task.detached(priority: .userInitiated) { [weak self, weak dlg, weak wait] in
                 // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-010. The reveal flow only needs
+                // auditors): the reveal flow only needs
                 // the seed words; we wipe the binary key
                 // material as soon as `decryptWalletJson`
                 // returns, so the only surviving secret in

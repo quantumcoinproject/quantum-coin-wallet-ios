@@ -776,10 +776,16 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
             let wait = WaitDialogViewController(
                 message: Localization.shared.getWaitUnlockByLangValues())
             unlock.present(wait, animated: true)
+            // Phase callback wires the wait-dialog's secondary status
+            // line to "Verifying..." during the integrity-check window
+            // of the strongbox slot write that records the new network.
+            // See `WaitDialogViewController.setStatus`.
+            let onPhase = makeVerifyingPhaseHandler(for: wait)
             Task.detached(priority: .userInitiated) { [weak self, weak unlock, weak wait] in
                 var failure: Error? = nil
                 do {
-                    try BlockchainNetworkManager.shared.addNetwork(net, password: pw)
+                    try BlockchainNetworkManager.shared.addNetwork(net,
+                        password: pw, onPhase: onPhase)
                 } catch {
                     failure = error
                 }
@@ -814,7 +820,7 @@ public final class BlockchainNetworkAddViewController: UIViewController, HomeScr
     /// understands the gate is throttling them by design. The
     /// network add path is now rate-limited because the limiter
     /// pre-check + recordFailure live inside
-    /// `UnlockCoordinatorV2.persistSnapshot` (see QCW-002).
+    /// `UnlockCoordinatorV2.persistSnapshot`.
     private func showUnlockError(over unlock: UnlockDialogViewController,
         error: Error?) {
         if let uc = error as? UnlockCoordinatorV2Error,

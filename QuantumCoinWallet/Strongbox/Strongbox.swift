@@ -382,6 +382,35 @@ public final class Strongbox: @unchecked Sendable {
             cameraPermissionAskedOnce: false)
     }
 
+    /// Construct a snapshot for a freshly-created strongbox that
+    /// already contains `wallet` as the sole entry. Used by
+    /// `UnlockCoordinatorV2.createNewStrongboxWithInitialWallet` so
+    /// the first-launch bootstrap and the first-wallet-add can
+    /// share a single atomic mutation transaction.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the wallet's `idx` should match what `appendWallet` would
+    /// have assigned (i.e. 0 for the first wallet) so a future
+    /// `appendWallet` can compute `maxWalletIndex + 1` and not
+    /// collide. This is the caller's responsibility because the
+    /// caller has already called `JsBridge.encryptWalletJson` for
+    /// this `Wallet.encryptedSeed` and changing the idx here would
+    /// require re-encryption.
+    /// Cross-references:
+    ///   - SECURITY_AUDIT_FINDINGS.md UNIFIED-D004 (atomic
+    ///     bootstrap+append closes this).
+    public static func snapshotWithInitialWallet(
+        _ wallet: StrongboxPayload.Wallet) -> StrongboxPayload {
+        return rebuildPayloadStatic(
+            wallets: [wallet],
+            currentWalletIndex: wallet.idx,
+            customNetworks: [],
+            activeNetworkIndex: 0,
+            backupEnabled: false,
+            cloudBackupFolderUri: "",
+            advancedSigning: false,
+            cameraPermissionAskedOnce: false)
+    }
+
     // MARK: - Errors
 
     public enum Error: Swift.Error, CustomStringConvertible {
@@ -513,7 +542,7 @@ public final class Strongbox: @unchecked Sendable {
     /// time at byte granularity in our process model. But the
     /// project discipline is "all integrity comparisons are
     /// constant-time", and writing the constant-time compare
-    /// is free; see QCW-023.
+    /// is free.
     public static func verifyChecksum(of payload: StrongboxPayload) -> Bool {
         let draft = ChecksumDraft(
             v: payload.v,

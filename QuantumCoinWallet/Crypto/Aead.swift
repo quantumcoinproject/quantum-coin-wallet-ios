@@ -131,6 +131,28 @@ public enum Aead {
     public static func open(_ envelopeJson: String, keyBytes: Data) throws -> Data {
         guard
         let obj = jsonObject(envelopeJson),
+        // -----------------------------------------------------
+        // Validate the envelope version BEFORE delegating to
+        // AES.GCM.
+        // The wire format carries `"v": envelopeVersion` (currently
+        // 2) precisely so the codec can reject envelopes produced
+        // by a future-incompatible writer or by a downgrade-attack
+        // attempt. Without this check the field was a decorative
+        // string-printed-into-JSON: a sealed envelope with `"v": 99`
+        // and a perfectly-valid AES-GCM blob still decrypts and
+        // returns the plaintext. That breaks the compatibility-
+        // contract this field exists to express - any future
+        // schema bump (e.g. switch to ChaCha20-Poly1305, change
+        // the canonical (ciphertext || tag) layout, change the
+        // nonce length) would silently accept old AND new shapes
+        // mixed together, with the actual cryptographic posture
+        // of the file impossible to determine from the envelope.
+        // The check costs one Int compare and is exhaustive: any
+        // mismatch falls into `AeadError.malformedEnvelope` which
+        // the strongbox-codec treats as "this slot is corrupt; do
+        // NOT overwrite it" (matching the existing tag-fail path).
+        // -----------------------------------------------------
+        let v = obj["v"] as? Int, v == envelopeVersion,
         let cipherB64 = obj["cipherText"] as? String,
         let ivB64 = obj["iv"] as? String,
         let ivData = Data(base64Encoded: ivB64),

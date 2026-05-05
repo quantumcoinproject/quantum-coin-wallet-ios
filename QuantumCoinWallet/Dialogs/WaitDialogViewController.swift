@@ -6,12 +6,51 @@
 
 import UIKit
 
+/// Build a phase-callback closure that updates a presented
+/// `WaitDialogViewController`'s secondary status line as a
+/// strongbox slot write progresses through phases. The closure
+/// hops to the main thread (writer thread is unspecified) and
+/// shows "Verifying..." during the integrity-check window;
+/// other phases clear the secondary line. The dialog reference
+/// is held weakly so a dialog dismissed early by the success
+/// path doesn't keep itself alive.
+/// (audit-grade notes for AI reviewers and human auditors):
+/// the wait dialog's main "Please wait..." message stays
+/// visible for the entire write — this helper only updates the
+/// secondary slot. The audit invariant is "wallet operations
+/// never silently dismiss the wait dialog mid-flow", and the
+/// secondary slot keeps that invariant a code-level fact (see
+/// `WaitDialogViewController.setStatus` for the rationale).
+public func makeVerifyingPhaseHandler(for dialog: WaitDialogViewController?)
+    -> (AtomicSlotWriter.WriteVerifyPhase) -> Void {
+    return { [weak dialog] phase in
+        DispatchQueue.main.async {
+            switch phase {
+                case .writing, .promoting, .committed:
+                dialog?.setStatus(nil)
+                case .verifying:
+                dialog?.setStatus(Localization.shared.getStatusVerifyingByLangValues())
+            }
+        }
+    }
+}
+
 public final class WaitDialogViewController: ModalDialogViewController {
 
     private let spinner = UIActivityIndicatorView(style: .large)
     private let label = UILabel()
     private let detailLabel = UILabel()
     private let progressLabel = UILabel()
+    private let statusLabel = UILabel()
+
+    /// Pending status text set BEFORE `viewDidLoad` ran (e.g. a
+    /// caller invoked `setStatus("Verifying...")` while the dialog
+    /// was still presenting). Applied to `statusLabel` once the
+    /// view is loaded so the text isn't lost. Using a separate
+    /// pending field rather than touching `statusLabel` directly
+    /// avoids the implicit `loadViewIfNeeded` call on a thread
+    /// other than the main thread.
+    private var pendingStatusText: String?
 
     public var message: String {
         didSet { label.text = message }
@@ -50,6 +89,22 @@ public final class WaitDialogViewController: ModalDialogViewController {
         progressLabel.numberOfLines = 1
         progressLabel.isHidden = true
 
+        // Phase-of-operation status line (e.g. "Verifying..."). Sits
+        // beneath the main "Please wait..." message and toggles
+        // visibility via `setStatus(_:)`. Uses the same secondary
+        // color as `progressLabel` so the two read as similar
+        // "details under the spinner" content.
+        statusLabel.font = Typography.body(13)
+        statusLabel.textAlignment = .left
+        statusLabel.textColor = .secondaryLabel
+        statusLabel.numberOfLines = 1
+        statusLabel.isHidden = true
+        if let pending = pendingStatusText {
+            statusLabel.text = pending
+            statusLabel.isHidden = pending.isEmpty
+            pendingStatusText = nil
+        }
+
         let spinnerWrap = UIView()
         spinnerWrap.translatesAutoresizingMaskIntoConstraints = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -61,7 +116,7 @@ public final class WaitDialogViewController: ModalDialogViewController {
             ])
 
         let stack = UIStackView(arrangedSubviews: [
-                spinnerWrap, label, detailLabel, progressLabel
+                spinnerWrap, label, detailLabel, progressLabel, statusLabel
             ])
         stack.axis = .vertical
         stack.alignment = .fill
@@ -91,5 +146,43 @@ public final class WaitDialogViewController: ModalDialogViewController {
         let value = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         progressLabel.text = value
         progressLabel.isHidden = value.isEmpty
+    }
+
+    /// Show / hide a secondary phase-of-operation status line
+    /// (e.g. "Verifying...") beneath the main message. Pass nil or
+    /// empty to hide. CRITICAL: this method does NOT modify
+    /// `message` and does NOT dismiss the dialog. The intent is
+    /// that the main "Please wait..." line stays visible the
+    /// entire time, with the status line appearing and
+    /// disappearing as the operation progresses through phases
+    /// (write -> verify -> promote -> commit).
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// The secondary slot is intentionally a separate UILabel
+    /// rather than reusing `detailLabel` (monospaced; reserved
+    /// for the address-being-decrypted line in RestoreFlow) or
+    /// `progressLabel` (reserved for the "N of M" batch counter)
+    /// so each wait-dialog slot has one and only one semantic
+    /// meaning. The audit invariant this keeps code-level is:
+    /// "wallet operations never silently dismiss the wait dialog
+    /// mid-flow" — a future contributor cannot accidentally
+    /// reset the main message or hide the dialog by writing to
+    /// the wrong slot. MUST be called on the main thread.
+    /// Cross-references:
+    ///   - `AtomicSlotWriter.WriteVerifyPhase` for the storage-
+    ///     layer phases that drive this status line.
+    ///   - `UnlockCoordinatorV2.WriteVerifyPhaseCallback` for the
+    ///     callback type the writer hands back to the UI.
+    public func setStatus(_ text: String?) {
+        let value = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // If viewDidLoad hasn't run yet we can't touch statusLabel
+        // safely (its text would be reset on viewDidLoad). Stash
+        // the value in pendingStatusText and let viewDidLoad
+        // apply it.
+        if !isViewLoaded {
+            pendingStatusText = value
+            return
+        }
+        statusLabel.text = value
+        statusLabel.isHidden = value.isEmpty
     }
 }

@@ -41,6 +41,14 @@ UIAdaptivePresentationControllerDelegate {
     /// for `strongboxUsername`).
     private let passwordField = PasswordTextField(purpose: .existingPassword)
     private let errorLabel = UILabel()
+    /// Non-fatal banner shown when
+    /// `StrongboxRedundancyState.singleSlot` is true at present
+    /// time. The user is gently nudged to create a fresh `.wallet`
+    /// backup soon. We use orange (system warning) rather than red
+    /// because the unlock itself succeeded; this is a forward-
+    /// looking advisory, not an error.
+    /// See SECURITY_AUDIT_FINDINGS.md UNIFIED-D012 / D003.
+    private let degradedBanner = UILabel()
     private let unlockButton = UIButton(type: .system)
     private let closeButton = UIButton(type: .system)
 
@@ -76,6 +84,19 @@ UIAdaptivePresentationControllerDelegate {
         errorLabel.numberOfLines = 0
         errorLabel.isHidden = true
 
+        // Pre-configure the degraded-redundancy banner. We hide
+        // it by default and show it lazily in `viewWillAppear`
+        // based on the current `StrongboxRedundancyState`. Reading
+        // at present time (rather than wiring a Combine observer)
+        // is fine because the state is sticky for the rest of the
+        // session and changes at most a handful of times per
+        // session.
+        degradedBanner.text = Localization.shared.getStrongboxDegradedBannerByLangValues()
+        degradedBanner.textColor = .systemOrange
+        degradedBanner.font = Typography.body(12)
+        degradedBanner.numberOfLines = 0
+        degradedBanner.isHidden = true
+
         unlockButton.setTitle(Localization.shared.getUnlockByLangValues(), for: .normal)
         unlockButton.addTarget(self, action: #selector(unlockTapped), for: .touchUpInside)
 
@@ -95,7 +116,7 @@ UIAdaptivePresentationControllerDelegate {
         // password field so iOS's autofill heuristic pairs them in
         // the same vertical group; it has alpha=0 so it consumes
         // no visual space.
-        let stack = UIStackView(arrangedSubviews: [titleLabel, usernameField, passwordField, errorLabel, buttonRow])
+        let stack = UIStackView(arrangedSubviews: [titleLabel, degradedBanner, usernameField, passwordField, errorLabel, buttonRow])
         stack.axis = .vertical
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -127,6 +148,11 @@ UIAdaptivePresentationControllerDelegate {
         // false because the delegate method short-circuits on that
         // flag.
         presentationController?.delegate = self
+        // Refresh the degraded-redundancy banner each time the
+        // dialog is presented so a state change (older-slot fallback
+        // earlier in the session, or re-mirror-failed-twice in
+        // Part 12) becomes visible on the very next unlock surface.
+        degradedBanner.isHidden = !StrongboxRedundancyState.shared.singleSlot
     }
 
     private func applyMandatoryVisibility() {

@@ -1,66 +1,52 @@
 // KeychainWrapStore.swift (KeyMaterial layer 4)
-// Per-device 32-byte AES-256 key stored in the iOS Keychain
+// Per-device 32-byte AES-256 MAC key stored in the iOS Keychain
 // with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` plus
-// `kSecAttrSynchronizable=false`. Used to "wrap" the strongbox's
-// `mainKey` into `wrap.keychainWrap` so a returning user with
-// biometric authentication enrolled can unlock the wallet
-// without typing the password.
-// Closes ``.
-// Why this exists (audit-grade notes for AI reviewers and
-// human auditors):
-// The password is the canonical recovery factor of this
-// wallet. It MUST always work, including on a freshly-
-// restored device where no per-device state exists. So the
-// per-device wrap can NEVER be the only way to unlock; it
-// is a daily-convenience overlay on top of the password
-// path.
-// The wrap on disk (`wrap.keychainWrap` in the v2 slot
-// file) DOES travel via iCloud Backup along with the rest
-// of the slot file - we cannot mark just one JSON field
-// exclude-from-backup. But the wrap is encrypted under the
-// per-device 32-byte AES key kept in this Keychain item;
-// that Keychain item does NOT travel via iCloud Backup
-// (`kSecAttrSynchronizable=false`). On a freshly-restored
-// device:
-// * The slot file is restored from iCloud, including
-// `wrap.keychainWrap`.
-// * The Keychain item is NOT restored (per Apple's
-// documented `ThisDeviceOnly` semantics).
-// * The biometric unlock path therefore fails (cannot
-// decrypt `keychainWrap`), and the user falls through
-// to the password path.
-// * After a successful password unlock on the new
-// device, this store regenerates the per-device key,
-// re-wraps `mainKey`, and the next signing call writes
-// the updated `wrap.keychainWrap` back to disk.
-// That is the correct posture: the wrap is a per-device
-// overlay; replicating it across devices would defeat the
-// whole point.
-// Tradeoffs:
-// - We DO NOT use `LAContext` / `kSecAttrAccessControl =
-// biometryCurrentSet` here. The biometric prompt is
-// orchestrated at a higher layer (`UnlockDialogViewController`
-// / a future Settings-screen toggle). This file is just
-// the storage primitive. Wiring biometric *gating* into
-// the Keychain item itself is a future hardening: it
-// would tie the wrap's accessibility to a current-set
-// biometric enrollment, so a coerced enrollment (an
-// attacker adding their own face under duress) would
-// immediately invalidate the wrap. We ship without that
-// gate today because it changes the user-visible UX of
-// the unlock dialog (must always show a Face-ID prompt);
-// adding it is a one-line `kSecAttrAccessControl` change
-// once the UI flow exists.
-// - The Keychain item is hardware-protected via the Secure
-// Enclave on devices that have one (every iPhone since
-// 5s); on older devices it is software-protected only.
-// We do not gate on Secure Enclave presence because the
-// deployment target is iOS 15+, which guarantees Secure
-// Enclave on every supported device.
-// - The wrap's IV is fresh per write (CSPRNG via
-// `SecureRandom`). AES-GCM is nonce-misuse-fragile so we
-// never reuse the IV; the IV is stored in-band inside
-// `wrap.keychainWrap.iv`.
+// `kSecAttrSynchronizable=false`.
+//
+// (audit-grade notes for AI reviewers and human auditors):
+// this file used to manage TWO Keychain items:
+//   1. A per-device AES "wrap" key that sealed `mainKey` into
+//      `wrap.keychainWrap` so a future biometric unlock UI
+//      could decrypt the strongbox without the password.
+//   2. A per-device "UI MAC" key that authenticates the `ui`
+//      block in the slot file (so the EULA flag and the
+//      preferred language can be read pre-unlock with an
+//      integrity guarantee).
+// Item (1) was deleted because the biometric unlock UI never
+// shipped; the wrap was generating an extractable Keychain
+// entry and a transportable disk-side ciphertext on every
+// unlock without enabling any user feature, all of which was
+// pure attack-surface increase. The deletion path enumerated
+// here is:
+//   * Removed `loadOrCreateWrapKey()`, `deleteWrapKey()`,
+//     `hasWrapKey()`, plus the private service / account
+//     constants that named the wrap entry.
+//   * Removed `KeychainWrapStoreError.rngFailure` (only the
+//     wrap path needed it; the UI-MAC path raises
+//     `keychainStatus` if `SecRandomCopyBytes` fails inside
+//     `SecureRandom.bytes`).
+//   * `UnlockCoordinatorV2.tryRegenerateKeychainWrap` and its
+//     unlock-time call site are gone; new strongbox writes
+//     always pass `keychainWrap: nil`.
+//   * `StrongboxFileCodec.AeadEnvelope.keychainWrap` stays as
+//     `Optional` for forward read-compat with old slot files
+//     that still carry a non-nil value (no current users, but
+//     the cost of keeping the optional field is zero).
+//   * `AppDelegate` performs a one-shot
+//     `SecItemDelete` on cold launch to clear any pre-existing
+//     wrap-key Keychain entry from a previous build.
+// If a biometric unlock UI is ever added, design the storage
+// primitive against `kSecAttrAccessControl =
+// biometryCurrentSet` so a coerced enrollment (an attacker
+// adding their own face under duress) immediately invalidates
+// the wrap. Do NOT re-introduce an unconditional Keychain
+// entry of this shape.
+//
+// What remains in this file: the UI-MAC key. It is distinct
+// from the strongbox `mainKey` because the `ui` block is read
+// pre-unlock (the EULA flag and language code must be
+// available before the password); it needs an integrity
+// guarantee that does NOT require the password.
 
 import Foundation
 import Security
@@ -68,7 +54,6 @@ import Security
 public enum KeychainWrapStoreError: Error, CustomStringConvertible {
     case keychainStatus(OSStatus, op: String)
     case missing
-    case rngFailure
     case malformedKeyMaterial
 
     public var description: String {
@@ -76,9 +61,7 @@ public enum KeychainWrapStoreError: Error, CustomStringConvertible {
             case .keychainStatus(let s, let op):
             return "KeychainWrapStore: \(op) failed osStatus=\(s)"
             case .missing:
-            return "KeychainWrapStore: per-device wrap key not present"
-            case .rngFailure:
-            return "KeychainWrapStore: SecureRandom failed"
+            return "KeychainWrapStore: per-device key not present"
             case .malformedKeyMaterial:
             return "KeychainWrapStore: stored key is not 32 bytes"
         }
@@ -87,69 +70,30 @@ public enum KeychainWrapStoreError: Error, CustomStringConvertible {
 
 public enum KeychainWrapStore {
 
-    private static let service = "org.quantumcoin.wallet.strongbox-wrap"
-    private static let account = "deviceWrapKey-v2"
-
     private static let uiService = "org.quantumcoin.wallet.strongbox-ui-mac"
     private static let uiAccount = "deviceUiKey-v2"
 
-    // MARK: - Wrap key (used to seal `mainKey` into `wrap.keychainWrap`)
-
-    /// Read-or-create the per-device wrap key. On the very
-    /// first call this generates 32 fresh CSPRNG bytes and
-    /// stores them; subsequent calls return the same bytes.
-    /// (audit-grade notes for AI reviewers and human auditors):
-    /// the returned `Data` is sensitive key material. Callers
-    /// MUST hold it in a `var` and zero it via
-    /// `defer { result.resetBytes(in: 0..<result.count) }` as
-    /// soon as the wrap operation completes. See QCW-011 and
-    /// the `tryRegenerateKeychainWrap` call site in
-    /// `UnlockCoordinatorV2` for the canonical pattern.
-    public static func loadOrCreateWrapKey() throws -> Data {
-        if let existing = try fetchKey(service: service, account: account) {
-            guard existing.count == 32 else {
-                throw KeychainWrapStoreError.malformedKeyMaterial
-            }
-            return existing
-        }
-        let fresh: Data
-        do {
-            fresh = try SecureRandom.bytes(32)
-        } catch {
-            throw KeychainWrapStoreError.rngFailure
-        }
-        try storeKey(fresh, service: service, account: account)
-        return fresh
-    }
-
-    /// Drop the per-device wrap key. After this returns the
-    /// biometric unlock path no longer works on this device;
-    /// the user must re-enter their password to unlock and the
-    /// wrap will be regenerated on first successful unlock.
-    public static func deleteWrapKey() throws {
-        try deleteKey(service: service, account: account)
-    }
-
-    /// Read-only check. Returns `true` if a wrap key exists,
-    /// without materialising it. Used by `UnlockDialog` to
-    /// decide whether to offer the biometric unlock button.
-    public static func hasWrapKey() -> Bool {
-        return (try? fetchKey(service: service, account: account)) != nil
-    }
+    // Legacy cleanup constants. The legacy per-device wrap key
+    // used these service / account values. Exposed so
+    // `AppDelegate` can perform a one-shot `SecItemDelete` on
+    // cold launch and clear any pre-existing entry from an
+    // earlier build. Do NOT introduce new readers of these
+    // constants - the wrap-key path is intentionally gone.
+    public static let legacyWrapService = "org.quantumcoin.wallet.strongbox-wrap"
+    public static let legacyWrapAccount = "deviceWrapKey-v2"
 
     // MARK: - UI-MAC key (used to authenticate the `ui` block in slot files)
 
     /// Read-or-create the per-device UI-MAC key. Distinct from
-    /// the wrap key because the UI block is read pre-unlock
-    /// (so the EULA flag and language code are available
-    /// before the password); they need an integrity guarantee
-    /// that does NOT require the password.
+    /// the strongbox `mainKey` because the UI block is read
+    /// pre-unlock (so the EULA flag and language code are
+    /// available before the password); they need an integrity
+    /// guarantee that does NOT require the password.
     /// (audit-grade notes for AI reviewers and human auditors):
     /// the returned `Data` is sensitive MAC key material.
     /// Callers MUST hold it in a `var` and zero it via
     /// `defer { result.resetBytes(in: 0..<result.count) }` as
-    /// soon as the verify / sign operation completes. See
-    /// QCW-011.
+    /// soon as the verify / sign operation completes.
     public static func loadOrCreateUiMacKey() throws -> Data {
         if let existing = try fetchKey(service: uiService, account: uiAccount) {
             guard existing.count == 32 else {
@@ -161,10 +105,38 @@ public enum KeychainWrapStore {
         do {
             fresh = try SecureRandom.bytes(32)
         } catch {
-            throw KeychainWrapStoreError.rngFailure
+            throw KeychainWrapStoreError.keychainStatus(
+                errSecAllocate, op: "rng-failure")
         }
         try storeKey(fresh, service: uiService, account: uiAccount)
         return fresh
+    }
+
+    /// One-shot cleanup helper invoked at cold launch from
+    /// `AppDelegate` to delete any pre-existing legacy wrap-key
+    /// Keychain entry left behind by an earlier build of the
+    /// app. Returns `true` if an entry was deleted, `false` if
+    /// none was present, and surfaces only catastrophic
+    /// `OSStatus` errors via `throws`.
+    /// (audit-grade notes for AI reviewers and human auditors):
+    /// the caller MUST suppress and log all
+    /// non-success outcomes; a Keychain hiccup at launch must
+    /// never block the user from reaching the unlock dialog.
+    @discardableResult
+    public static func deleteLegacyWrapKeyIfPresent() throws -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: legacyWrapService,
+            kSecAttrAccount as String: legacyWrapAccount
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        switch status {
+            case errSecSuccess: return true
+            case errSecItemNotFound: return false
+            default:
+            throw KeychainWrapStoreError.keychainStatus(
+                status, op: "delete-legacy-wrap")
+        }
     }
 
     // MARK: - Generic Keychain primitives
@@ -211,17 +183,5 @@ public enum KeychainWrapStore {
         guard status == errSecSuccess else {
             throw KeychainWrapStoreError.keychainStatus(status, op: "store")
         }
-    }
-
-    private static func deleteKey(service: String,
-        account: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        if status == errSecSuccess || status == errSecItemNotFound { return }
-        throw KeychainWrapStoreError.keychainStatus(status, op: "delete")
     }
 }

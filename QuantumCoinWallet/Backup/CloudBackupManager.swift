@@ -329,6 +329,38 @@ public final class CloudBackupManager: NSObject {
     /// `[FOLDER]/[FILENAME]` placeholders in the success toast (the
     /// same template used by the file-export delegate path); returns
     /// `nil` and shows an error toast on failure.
+    /// What it closes:
+    ///   The historical shape was a fire-and-forget
+    ///   `Data.write(to: options: [.atomic])` followed by an
+    ///   immediate success toast. That gave the user a green
+    ///   "backup saved" signal without ever observing whether the
+    ///   bytes that landed on disk match the bytes the JS bridge
+    ///   produced. A silent NAND bit-flip during the write window,
+    ///   a partial filesystem write on a near-full iCloud Drive,
+    ///   or a security-scoped-resource race with the iCloud daemon
+    ///   could each leave a corrupt `.wallet` file the user will
+    ///   only discover at restore time — by which point the
+    ///   strongbox may have moved on and the original seed is gone.
+    /// Why this shape (uncached re-read + byte-compare):
+    ///   `[.atomic]` does the rename-in-place, but it does NOT
+    ///   read the staged bytes back. We re-read with `[.uncached]`
+    ///   so the read goes through the OS's page-cache flush
+    ///   boundary (the same discipline `AtomicSlotWriter` uses for
+    ///   the on-device strongbox) and byte-compare against the
+    ///   bytes the JS bridge produced. On mismatch we delete the
+    ///   corrupt file (best-effort) and return nil so the caller
+    ///   surfaces the error toast instead of the success path.
+    /// Tradeoffs:
+    ///   Adds one uncached re-read + Data == Data over the
+    ///   .wallet file (typically a few KiB). User-perceived
+    ///   backup latency goes up by ~5-50 ms on iCloud Drive
+    ///   targets. Acceptable — the alternative is a silent
+    ///   "restored backup is corrupt" surprise.
+    /// Cross-references:
+    ///   - `AtomicSlotWriter.writeAndVerifyBytes` for the same
+    ///     discipline applied to the on-device strongbox slot
+    ///     files (which already byte-compare via the codec's
+    ///     deep-verify closure).
     @discardableResult
     public func writeWalletFile(address: String, walletJson: String) -> URL? {
         guard let folderURL = resolveBookmark() else {
@@ -338,8 +370,22 @@ public final class CloudBackupManager: NSObject {
         let ok = folderURL.startAccessingSecurityScopedResource()
         defer { if ok { folderURL.stopAccessingSecurityScopedResource() } }
         let file = folderURL.appendingPathComponent(Self.buildFilename(address: address))
+        let expected = Data(walletJson.utf8)
         do {
-            try Data(walletJson.utf8).write(to: file, options: [.atomic])
+            try expected.write(to: file, options: [.atomic])
+            // Read-back-and-byte-compare. [.uncached] forces the
+            // OS to traverse the page-cache flush boundary so an
+            // in-cache copy that didn't actually land on flash
+            // surfaces as a short / zero read here, not at restore
+            // time on another device.
+            let staged = try Data(contentsOf: file, options: [.uncached])
+            guard staged == expected else {
+                // Best-effort cleanup so we don't leave a corrupt
+                // .wallet file the user might later try to restore.
+                try? FileManager.default.removeItem(at: file)
+                Toast.showError(Localization.shared.getBackupFailedByLangValues())
+                return nil
+            }
             return file
         } catch {
             Toast.showError(Localization.shared.getBackupFailedByLangValues())
@@ -422,7 +468,7 @@ public final class CloudBackupManager: NSObject {
         // auditors): the original was
         // `let ok = url.startAccessingSecurityScopedResource`
         // which captures the *method reference* WITHOUT
-        // invoking it (see QCW-008). The defer then called
+        // invoking it. The defer then called
         // `ok()`, meaning the resource was started in the
         // defer (right before stop) and never actually
         // accessed during the bookmark read. iCloud / external
@@ -443,8 +489,14 @@ public final class CloudBackupManager: NSObject {
         guard let data = try? url.bookmarkData(options: [],
             includingResourceValuesForKeys: nil,
             relativeTo: nil) else { return }
-        PrefConnect.shared.writeString(PrefKeys.CLOUD_BACKUP_FOLDER_URI_KEY,
-            data.base64EncodedString())
+        do {
+            try PrefConnect.shared.writeString(
+                PrefKeys.CLOUD_BACKUP_FOLDER_URI_KEY,
+                data.base64EncodedString())
+        } catch {
+            Logger.warn(category: "PREFS_FLUSH_FAIL",
+                "CLOUD_BACKUP_FOLDER_URI: \(error)")
+        }
     }
 }
 

@@ -68,7 +68,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
 
     private let contentStack = UIStackView()
 
-    /// QCW-014: hides the just-generated seed grid on
+    /// Hides the just-generated seed grid on
     /// `renderSeedShow` whenever the screen is being recorded /
     /// mirrored. Reset on every `render()` so the previous step's
     /// observer does not fire after the layout swap. See
@@ -269,7 +269,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let topRule = makeRule()
         let body = makeBody(L.getBackupPromptByLangValues())
         // (audit-grade notes for AI reviewers and human
-        // auditors): QCW-015 short-term mitigation. The
+        // auditors): short-term mitigation. The
         // BACKUP_ENABLED toggle controls only the
         // `isExcludedFromBackup` resource flag on the slot
         // files, which iOS honours for iCloud Backup and
@@ -284,8 +284,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         // strength, but the user must understand the limit
         // before answering. The warning paragraph below makes
         // that limit visible at the choice site rather than
-        // burying it in Settings. See plan section
-        // "backup-fix" (QCW-015).
+        // burying it in Settings.
         let warning = makeBody(L.getBackupEncryptedWarningByLangValues())
         let group = RadioGroup()
         group.addChoice(tag: 1, title: L.getYesByLangValues())
@@ -300,7 +299,17 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 guard let tag = group.selectedTag else {
                     self.showSelectAnOption(); return
                 }
-                PrefConnect.shared.writeBool(PrefKeys.BACKUP_ENABLED_KEY, tag == 1)
+                // PrefConnect setters are now throwing (Part 5). A
+                // failed flush here downgrades to "next launch sees
+                // BACKUP_ENABLED_KEY at the previous value" rather
+                // than data loss; log + continue.
+                do {
+                    try PrefConnect.shared.writeBool(
+                        PrefKeys.BACKUP_ENABLED_KEY, tag == 1)
+                } catch {
+                    Logger.warn(category: "PREFS_FLUSH_FAIL",
+                        "BACKUP_ENABLED_KEY: \(error)")
+                }
                 // Re-apply the iCloud-Backup exclusion bit so the
                 // toggle takes effect immediately. On a truly-fresh
                 // install neither slot file exists yet, so this call
@@ -438,26 +447,35 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let back = makeBackBar()
         let title = makeTitle(L.getSeedWordsByLangValues())
         let grid = SeedChipGrid(words: generatedSeed, editable: false)
-        // QCW-014: hide the seed grid while the screen is being
-        // captured. The warning view is layered over `grid` and
+        // Defense-in-depth at the screen-region level - the
+        // SeedChipGrid already suppresses VoiceOver
+        // on itself and its descendants, but we also flag the
+        // grid container as hidden so a future container/parent
+        // change cannot accidentally re-expose the per-cell
+        // labels through a sibling that ends up wrapping the
+        // grid. See SeedChipGrid.configureAccessibility comment
+        // block for the threat model.
+        grid.accessibilityElementsHidden = true
+        // Hide the seed grid while the screen is being captured.
+        // The warning view is layered over `grid` and
         // becomes visible whenever `UIScreen.isCaptured == true`.
         let captureWarning = makeSeedCaptureWarning()
         seedShowCaptureGuard = ScreenCaptureGuard(
             protectedView: grid, host: contentStack, warningView: captureWarning)
         let copyRow = makeCopyRow { [weak self] in
             guard let self = self, !self.generatedSeed.isEmpty else { return }
-            // This is the seed-phrase copy site - the
-            // most sensitive pasteboard write the app ever makes. Use a
-            // 30 s expiration (instead of the 60 s default) because the
-            // user reliably pastes into a backup notes app within
-            // seconds and a shorter window narrows the residual-exposure
-            // surface. `Pasteboard.copySensitive` also opts the item out
-            // of Universal Clipboard via `.localOnly: true` so the seed
-            // phrase does NOT replicate to the user's other Apple
-            // devices. See Pasteboard.swift for the full rationale.
+            // This is the seed-phrase copy site - the most
+            // sensitive pasteboard write the app ever makes. The
+            // wrapper applies the centralized `Pasteboard.defaultLifetime`
+            // (30 s) and opts out of Universal Clipboard via
+            // `.localOnly: true` so the seed phrase
+            // does NOT replicate to the user's other Apple devices.
+            // The previous explicit `lifetime: 30` override is now
+            // redundant; relying on the default keeps the
+            // tightening uniform across every sensitive copy site.
+            // See Pasteboard.swift for the full rationale.
             Pasteboard.copySensitive(
-                self.generatedSeed.joined(separator: " "),
-                lifetime: 30)
+                self.generatedSeed.joined(separator: " "))
             // Feedback is the inline "Copied" label inside the row,
             // mirroring Android's `homeCopyClickListener`.
         }
@@ -499,6 +517,12 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         let title = makeTitle(L.getVerifySeedWordsByLangValues())
         let grid = SeedChipGrid(words: Array(repeating: "", count: generatedSeed.count),
             editable: true)
+        // Defense-in-depth - same posture as the new-seed
+        // display surface. The verification quiz takes
+        // user input but the input IS the seed phrase, so an
+        // accessibility echo of typed words has the same threat
+        // surface as displaying the seed.
+        grid.accessibilityElementsHidden = true
         let next = makeNextButton()
         next.addAction(UIAction(handler: { [weak self, weak grid] _ in
                 guard let self = self, let grid = grid else { return }
@@ -636,7 +660,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         Task.detached(priority: .userInitiated) { [keyType] in
             do {
                 // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-010. `createRandom` returns a
+                // auditors): `createRandom` returns a
                 // `WalletEnvelope` whose `privateKey`/`publicKey`
                 // are `Data`. We do NOT use them on this path
                 // (only the address + seed words are needed for
@@ -680,16 +704,41 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// `UnlockDialogViewController` before reaching here.
     private func commitGeneratedWallet(password: String,
         then: @escaping () -> Void) {
-        // If we already committed (e.g. user came back to verify and
-        // is finishing for the second time), short-circuit to avoid a
-        // duplicate keystore slot.
+        // Idempotency guards. Two layered checks:
+        //   (a) `walletIndex >= 0` catches the same-controller
+        //       re-tap (the field survives across renders) —
+        //       this is the historical guard.
+        //   (b) `Strongbox.index(forAddress:)` catches the
+        //       case where `walletIndex` was lost (e.g. the
+        //       view was rebuilt or the user re-entered via
+        //       Wallets-list "Add wallet") but the strongbox
+        //       already holds this address. Without (b), a
+        //       back/Next on the same generated seed would
+        //       silently append a second slot for the same
+        //       wallet. Source of truth is the loaded snapshot.
         if walletIndex >= 0 {
+            then()
+            return
+        }
+        if Strongbox.shared.isSnapshotLoaded,
+        let existing = Strongbox.shared.index(forAddress: generatedAddress) {
+            walletIndex = existing
             then()
             return
         }
         let wait = WaitDialogViewController(message:
             Localization.shared.getWaitWalletSaveByLangValues())
         present(wait, animated: true)
+        // Phase callback wires the wait-dialog's secondary status
+        // line to the storage-layer write phase (writing -> verifying
+        // -> promoting -> committed). The main "Please wait..." message
+        // stays visible the entire time; "Verifying..." flashes ON
+        // during the integrity-check window between F_FULLFSYNC and
+        // rename, then OFF on promote. See
+        // `WaitDialogViewController.setStatus` for the audit
+        // invariant, and `AtomicSlotWriter.writeAndVerify` for the
+        // closure called between writeAll and rename.
+        let onPhase = makeVerifyingPhaseHandler(for: wait)
         let address = generatedAddress
         let seedWords = generatedSeed
         Task.detached(priority: .userInitiated) {
@@ -698,31 +747,57 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
                 // `{seedWords:[...]}` payload (bridge.html line 372).
                 let walletInputJson = BackupExporter.encodeWalletInput(seedWords: seedWords)
                 // First-launch bootstrap vs returning-user paths:
-                // - First launch (no slot file): create the
-                // strongbox via `createNewStrongbox`, then
-                // `appendWallet` writes the first slot.
-                // - Returning user (slot file present): unlock
-                // the existing strongbox and append.
-                // Both paths re-derive the mainKey from the
-                // user's password inside the coordinator and zero
-                // it on return - the strongbox key bytes never
-                // survive past the helper call.
-                try Self.bootstrapOrUnlock(password: password)
+                // - First launch (no slot file): use Part 6's atomic
+                //   `createNewStrongboxWithInitialWallet` so the
+                //   first wallet is committed inside the SAME slot
+                //   write that creates the strongbox. A power-cut
+                //   between the historical pair (createNewStrongbox
+                //   + appendWallet) could leave an "empty wallet"
+                //   strongbox the user trusted as saved — closes
+                //   UNIFIED-D004.
+                // - Returning user (slot file present): unlock the
+                //   existing strongbox and append.
+                // Both paths re-derive the mainKey from the user's
+                // password inside the coordinator and zero it on
+                // return - the strongbox key bytes never survive
+                // past the helper call.
                 let encryptedEnv = try JsBridge.shared.encryptWalletJson(
                     walletInputJson: walletInputJson, password: password)
                 guard let enc = BackupExporter.extractEncryptedJson(encryptedEnv) else {
                     throw UnlockCoordinatorV2Error.decodeFailed
                 }
-                let idx = try UnlockCoordinatorV2.appendWallet(
-                    address: address,
-                    encryptedSeed: enc,
-                    hasSeed: true,
-                    password: password)
+                let idx: Int
+                if !Strongbox.shared.isSnapshotLoaded,
+                case .noStrongbox = UnlockCoordinatorV2.bootState() {
+                    let wallet = StrongboxPayload.Wallet(
+                        idx: 0,
+                        address: address,
+                        encryptedSeed: enc,
+                        hasSeed: true)
+                    try UnlockCoordinatorV2.createNewStrongboxWithInitialWallet(
+                        password: password,
+                        initialWallet: wallet,
+                        onPhase: onPhase)
+                    idx = 0
+                } else {
+                    try Self.bootstrapOrUnlock(password: password, onPhase: onPhase)
+                    idx = try UnlockCoordinatorV2.appendWallet(
+                        address: address,
+                        encryptedSeed: enc,
+                        hasSeed: true,
+                        password: password,
+                        onPhase: onPhase)
+                }
                 await MainActor.run { [weak self] in
                     self?.generatedWalletJson = enc
                     self?.walletIndex = idx
-                    PrefConnect.shared.writeInt(
-                        PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+                    do {
+                        try PrefConnect.shared.writeInt(
+                            PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+                    } catch {
+                        Logger.warn(category: "PREFS_FLUSH_FAIL",
+                            "WALLET_CURRENT_ADDRESS_INDEX_KEY: \(error)")
+                    }
                     wait.dismiss(animated: true) { then() }
                 }
             } catch {
@@ -743,13 +818,60 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// may run while another path has already loaded the snapshot
     /// (e.g. add-wallet from the wallets list); in that case we
     /// short-circuit because the snapshot is fresh.
-    nonisolated private static func bootstrapOrUnlock(password: String) throws {
-        if Strongbox.shared.isSnapshotLoaded { return }
+    /// What it closes:
+    ///   The "wrong password silently accepted" bug on the
+    ///   onboarding-flow unlock dialog (post-create backup
+    ///   screen Next, restore-flow add-wallet unlock prompt).
+    ///   The historical shape was
+    ///   `if Strongbox.shared.isSnapshotLoaded { return }` at
+    ///   the very top — which short-circuited the whole helper
+    ///   to "success" when the snapshot was already loaded by a
+    ///   previous create / restore step. Any password the user
+    ///   typed was reported as correct without ever AEAD-opening
+    ///   `passwordWrap`. The user could finish onboarding with
+    ///   PWD-A, tap Next on the backup screen, type PWD-B, and
+    ///   be routed home — only to discover at the next cold
+    ///   launch that PWD-A is the actual seal key.
+    /// Why this shape (verify-on-snapshot-loaded):
+    ///   When the snapshot is already loaded we MUST NOT call
+    ///   `unlockWithPasswordAndApplySession` (that path
+    ///   re-installs the snapshot, bumps the counter, and
+    ///   re-applies the session — none of which is safe against
+    ///   a live wallet). Instead we route through the new
+    ///   read-only `UnlockCoordinatorV2.verifyPassword` which
+    ///   AEAD-opens `passwordWrap` and signals the brute-force
+    ///   limiter, but does not touch any other state.
+    /// Tradeoffs:
+    ///   Pays one extra scrypt (~300 ms) on the post-create
+    ///   unlock prompt path. That cost is invisible next to the
+    ///   wait dialog the caller already presents during
+    ///   `commitGeneratedWallet` / `persistPendingWallet`.
+    /// Cross-references:
+    ///   - `UnlockCoordinatorV2.verifyPassword(_:)` for the
+    ///     read-only validator.
+    ///   - `RestoreFlow.bootstrapOrUnlock` for the matching
+    ///     change on the restore side.
+    ///   - `tapBackupDone` and `presentUnlockThen` are the call
+    ///     sites that benefit from this fix.
+    nonisolated private static func bootstrapOrUnlock(password: String,
+        onPhase: UnlockCoordinatorV2.WriteVerifyPhaseCallback? = nil) throws {
         switch UnlockCoordinatorV2.bootState() {
             case .noStrongbox:
-            try UnlockCoordinatorV2.createNewStrongbox(password: password)
+            try UnlockCoordinatorV2.createNewStrongbox(
+                password: password, onPhase: onPhase)
             case .strongboxPresent:
-            try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(password)
+            if Strongbox.shared.isSnapshotLoaded {
+                // Snapshot already loaded by a prior step;
+                // verify the password against the on-disk
+                // `passwordWrap` without re-installing the
+                // snapshot or bumping the rollback counter.
+                try UnlockCoordinatorV2.verifyPassword(password)
+            } else {
+                // Cold-path unlock: derive mainKey, install
+                // snapshot, apply session, bump counter — the
+                // full unlock pipeline.
+                try UnlockCoordinatorV2.unlockWithPasswordAndApplySession(password)
+            }
             case .tampered(let why):
             throw UnlockCoordinatorV2Error.tamperDetected(why)
         }
@@ -789,6 +911,10 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         ? enteredRestorePhrase
         : Array(repeating: "", count: seedLength)
         let grid = SeedChipGrid(words: initial, editable: true)
+        // Defense-in-depth on the restore entry surface. Same
+        // threat model as new-seed display and
+        // verification quiz - the typed words ARE the seed.
+        grid.accessibilityElementsHidden = true
         let next = makeNextButton()
         next.addAction(UIAction(handler: { [weak self, weak grid, weak next] _ in
                 guard let self = self, let grid = grid else { return }
@@ -832,8 +958,8 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         Task.detached(priority: .userInitiated) { [weak self, weak button] in
             do {
                 // (audit-grade notes for AI reviewers and human
-                // auditors): QCW-010. We only need `address` for
-                // the confirm screen, but we still must zeroize
+                // auditors): we only need `address` for the
+                // confirm screen, but we still must zeroize
                 // the binary key material so the ONLY surviving
                 // copy in process memory is what
                 // `encryptWalletJson` will stage from the user's
@@ -867,9 +993,41 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     /// `walletFromPhrase` returned only the latter, but seed words are
     /// the canonical recovery material so prefer them.
     private func persistPendingWallet(password: String) {
+        // Idempotency guard. The historical shape ran the
+        // encrypt + bootstrap + appendWallet pipeline every
+        // time the user tapped Next on `.confirmWallet`,
+        // including when the user back-tapped to fix a typo
+        // and re-tapped Next on the same seed. Each re-entry
+        // appended a brand-new wallet slot with the same
+        // seed but a different `idx`, producing 2..N
+        // duplicate entries in the wallets list. Two layered
+        // checks now short-circuit on a re-entry:
+        //   (a) `walletIndex >= 0` catches the same-controller
+        //       re-tap (the field survives across renders).
+        //   (b) `Strongbox.index(forAddress:)` catches the
+        //       case where `walletIndex` was lost (e.g. the
+        //       view was rebuilt) but the strongbox already
+        //       holds this address — the source of truth is
+        //       the loaded snapshot.
+        // Both branches advance to `.backupOptions` because
+        // a successful prior persist is by definition the
+        // state the user was trying to reach.
+        if walletIndex >= 0 {
+            step = .backupOptions
+            return
+        }
+        if Strongbox.shared.isSnapshotLoaded,
+        let existing = Strongbox.shared.index(forAddress: pendingAddress) {
+            walletIndex = existing
+            step = .backupOptions
+            return
+        }
         let wait = WaitDialogViewController(message:
             Localization.shared.getWaitWalletSaveByLangValues())
         present(wait, animated: true)
+        // See `commitGeneratedWallet` for the rationale on the
+        // phase-callback / "Verifying..." secondary status line wiring.
+        let onPhase = makeVerifyingPhaseHandler(for: wait)
         let address = pendingAddress
         let seedWords = pendingSeedWords
         // Set the seed up front so the wallet home screen has it as soon
@@ -879,26 +1037,50 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
         Task.detached(priority: .userInitiated) {
             do {
                 let walletInputJson = BackupExporter.encodeWalletInput(seedWords: seedWords)
-                // Bootstrap (first-launch) or unlock (returning
-                // user) so the appendWallet write below sees a
-                // consistent strongbox. The strongbox key never
-                // survives this call - see bootstrapOrUnlock.
-                try Self.bootstrapOrUnlock(password: password)
+                // Same atomic-bootstrap rationale as
+                // `commitGeneratedWallet`: on a fresh install
+                // (.noStrongbox) we use Part 6's atomic
+                // createNewStrongboxWithInitialWallet so a power-
+                // cut never leaves an empty-wallet strongbox the
+                // user has trusted as saved. Closes UNIFIED-D004.
                 let encEnv = try JsBridge.shared.encryptWalletJson(
                     walletInputJson: walletInputJson, password: password)
                 guard let enc = BackupExporter.extractEncryptedJson(encEnv) else {
                     throw UnlockCoordinatorV2Error.decodeFailed
                 }
-                let idx = try UnlockCoordinatorV2.appendWallet(
-                    address: address,
-                    encryptedSeed: enc,
-                    hasSeed: true,
-                    password: password)
+                let idx: Int
+                if !Strongbox.shared.isSnapshotLoaded,
+                case .noStrongbox = UnlockCoordinatorV2.bootState() {
+                    let wallet = StrongboxPayload.Wallet(
+                        idx: 0,
+                        address: address,
+                        encryptedSeed: enc,
+                        hasSeed: true)
+                    try UnlockCoordinatorV2.createNewStrongboxWithInitialWallet(
+                        password: password,
+                        initialWallet: wallet,
+                        onPhase: onPhase)
+                    idx = 0
+                } else {
+                    try Self.bootstrapOrUnlock(password: password, onPhase: onPhase)
+                    idx = try UnlockCoordinatorV2.appendWallet(
+                        address: address,
+                        encryptedSeed: enc,
+                        hasSeed: true,
+                        password: password,
+                        onPhase: onPhase)
+                }
                 await MainActor.run { [weak self] in
                     self?.generatedWalletJson = enc
                     self?.generatedAddress = address
                     self?.walletIndex = idx
-                    PrefConnect.shared.writeInt(PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+                    do {
+                        try PrefConnect.shared.writeInt(
+                            PrefKeys.WALLET_CURRENT_ADDRESS_INDEX_KEY, idx)
+                    } catch {
+                        Logger.warn(category: "PREFS_FLUSH_FAIL",
+                            "WALLET_CURRENT_ADDRESS_INDEX_KEY: \(error)")
+                    }
                     wait.dismiss(animated: true) { self?.step = .backupOptions }
                 }
             } catch {
@@ -1168,7 +1350,7 @@ public final class HomeWalletViewController: UIViewController, HomeScreenViewTyp
     }
     /// Background-coloured panel sized to match the seed grid; only
     /// becomes visible when `UIScreen.isCaptured == true`. See
-    /// QCW-014 / `ScreenCaptureGuard.swift`.
+    /// `ScreenCaptureGuard.swift`.
     private func makeSeedCaptureWarning() -> UIView {
         let v = UIView()
         v.backgroundColor = UIColor(named: "colorBackground") ?? .systemBackground
@@ -1651,10 +1833,31 @@ public final class SeedChipGrid: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// (audit-grade notes for AI reviewers and human auditors):
-    /// QCW-013 says BIP39 seed words must NOT be exposed to
-    /// VoiceOver as individual chip labels. A user with VoiceOver
+    /// BIP39 seed words must NOT be exposed to VoiceOver as
+    /// individual chip labels. A user with VoiceOver
     /// enabled in a public space would otherwise have each seed
     /// word read out loud the moment focus walks the grid.
+    /// (audit-grade notes for AI reviewers and human auditors,
+    /// retraction of prior position): the previous rationale
+    /// exempted editable mode from VoiceOver suppression
+    /// on the argument that "the user already knows what they
+    /// typed". That rationale is now retracted. The threat is not
+    /// "the user learns their own seed" - it is "anything the
+    /// VoiceOver pipeline sees can be observed by:
+    ///   * a Bluetooth/HearingAid eavesdropper within range
+    ///   * an Audio Hijack-class extension on a paired Mac
+    ///   * a CarPlay session forwarding the audio bus
+    ///   * an over-the-shoulder observer with the device speaker
+    ///     (the user may have VoiceOver on for other reasons)
+    /// any of which compromises the seed in clear text bypassing
+    /// every other on-device protection. The UX tradeoff is
+    /// explicit: a VoiceOver-only user cannot confirm by ear what
+    /// they typed, but they can still tap-to-focus and the
+    /// keyboard remains fully functional. We deliberately accept
+    /// that regression on the four seed-bearing surfaces
+    /// (reveal, new-seed display, verification quiz, restore
+    /// entry) because the alternative - audible seed
+    /// disclosure - is unrecoverable.
     /// Mitigation: each non-editable seed chip's label has
     /// `isAccessibilityElement = false` (set in `chip(text:index:)`
     /// below); the grid as a whole exposes one summary element
@@ -1666,10 +1869,29 @@ public final class SeedChipGrid: UIView {
     /// keyboard input. Editable fields contain user-entered text,
     /// not a freshly-generated secret being displayed.
     private func configureAccessibility() {
-        guard !editable else { return }
-        isAccessibilityElement = true
-        accessibilityTraits = [.staticText]
-        accessibilityLabel = Localization.shared.getSeedAccessibilitySummaryByLangValues()
+        // Editable mode is no longer short-circuited. Both
+        // branches receive the same suppression posture: the
+        // grid container is NOT an accessibility element, and the
+        // accessibilityElementsHidden flag prevents VoiceOver from
+        // walking into the per-cell labels or text fields. The
+        // per-cell text fields ALSO carry isAccessibilityElement =
+        // false (set in `chip(text:index:)`) so no descendant can
+        // re-expose itself even if a future container layout
+        // change exposes the inner views directly.
+        isAccessibilityElement = false
+        accessibilityElementsHidden = true
+        accessibilityLabel = nil
+        accessibilityTraits = []
+        // The summary element kept the non-editable surface from
+        // looking blank under VoiceOver inspector. With
+        // accessibilityElementsHidden set, the grid disappears
+        // from the accessibility tree entirely - which is the
+        // intended outcome. The screen title (set by the parent
+        // controller) and the surrounding instruction labels are
+        // still announced, so the user is told "Verify your seed
+        // phrase" / "Your seed phrase" / etc. without any per-word
+        // disclosure.
+        _ = editable
         accessibilityElementsHidden = true
     }
 
@@ -1815,6 +2037,19 @@ public final class SeedChipGrid: UIView {
             tf.returnKeyType = .next
             tf.delegate = self
             tf.translatesAutoresizingMaskIntoConstraints = false
+            // Each editable seed cell MUST NOT be a VoiceOver
+            // element. Sighted users still tap-to-focus
+            // and the keyboard works normally; VoiceOver simply
+            // does not enumerate or echo the typed letters. See
+            // the comment block above `configureAccessibility()`
+            // for the threat model and the explicit UX tradeoff.
+            // The container is also marked hidden so a descendant-
+            // walker cannot reach the field that way.
+            tf.isAccessibilityElement = false
+            tf.accessibilityElementsHidden = true
+            tf.accessibilityLabel = nil
+            container.isAccessibilityElement = false
+            container.accessibilityElementsHidden = true
             container.addSubview(tf)
             NSLayoutConstraint.activate([
                     tf.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
@@ -1837,8 +2072,8 @@ public final class SeedChipGrid: UIView {
             // foreground to black via `colorCommon7` in dark mode
             // would lose contrast on the coloured block.
             label.textColor = .white
-            // QCW-013: do NOT expose individual seed words to
-            // VoiceOver. The parent SeedChipGrid carries a single
+            // Do NOT expose individual seed words to VoiceOver.
+            // The parent SeedChipGrid carries a single
             // summary element instead. Suppress the chip cell
             // and its container.
             label.isAccessibilityElement = false

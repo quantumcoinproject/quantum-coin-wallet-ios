@@ -238,7 +238,7 @@ public final class TransactionReviewDialogViewController: ModalDialogViewControl
         ? UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         : Typography.body(14)
         // (audit-grade notes for AI reviewers and human auditors):
-        // QCW-017. Mono branch renders the destination address in
+        // mono branch renders the destination address in
         // a transaction-review confirmation dialog. Previously this
         // was capped at `numberOfLines = 2` with `.byTruncatingMiddle`,
         // so at large Dynamic Type sizes (Accessibility XXL) and on

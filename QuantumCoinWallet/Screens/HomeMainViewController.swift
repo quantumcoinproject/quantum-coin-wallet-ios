@@ -95,6 +95,21 @@ UITableViewDelegate {
     private var loading = false
     private var currentAddress: String { resolveCurrentAddress() }
 
+    /// Monotonically increasing generation token bumped on every
+    /// network switch. Each pagination fetch captures the value at
+    /// start; on response we apply the result only when the
+    /// captured generation still matches the current one. Without
+    /// this, a fetch already in flight against the OLD network's
+    /// scan API would land AFTER the network change cleared
+    /// `items` and would re-populate the table with stale tokens
+    /// from the previous chain - the user-visible "tokens table
+    /// did not refresh after I switched networks" symptom. The
+    /// counter is also what lets `handleNetworkConfigDidChange`
+    /// drop the `loading` guard safely: even if the prior fetch is
+    /// still in flight, its response is discarded, so a fresh page
+    /// 1 fetch against the new network can start immediately.
+    private var fetchGeneration: UInt64 = 0
+
     /// Drives the card's "hug content with a cap" sizing. Held at
     /// `.defaultHigh` so it can break in favor of the required
     /// `card.heightAnchor.constraint(lessThanOrEqualTo:
@@ -304,8 +319,22 @@ UITableViewDelegate {
     }
 
     @objc private func handleNetworkConfigDidChange() {
+        // Bump the generation FIRST so any in-flight page fetch
+        // against the old network's scan API silently drops its
+        // result on return (see `loadNextPage` and the
+        // `fetchGeneration` doc). Then clear local state and
+        // reset `loading` so the immediate `loadNextPage` below
+        // is allowed to run even if the prior request hasn't
+        // completed - without this reset the new fetch would be
+        // suppressed by the `guard !loading` check and the
+        // user would either see the table stay empty or, worse,
+        // the now-stale prior fetch would land after the clear
+        // and re-populate the table with the previous network's
+        // tokens.
+        fetchGeneration &+= 1
         items = []
         nextPage = 1
+        loading = false
         table.reloadData()
         applyEmptyState()
         loadNextPage()
@@ -335,24 +364,40 @@ UITableViewDelegate {
         let address = currentAddress
         guard !address.isEmpty else { return }
         loading = true
+        // Capture the generation at fetch start. The completion
+        // handler below applies the response only when this token
+        // still matches the live `fetchGeneration`; a network
+        // switch (or any future invalidation event that bumps the
+        // counter) between dispatch and response causes the result
+        // to be dropped on the floor instead of leaking the
+        // previous network's tokens into the post-switch table.
+        // The `loading` reset is also gated by the generation:
+        // if the network was switched while this fetch was in
+        // flight, `handleNetworkConfigDidChange` already cleared
+        // `loading` and started a fresh fetch, so we must NOT
+        // overwrite that fresh fetch's `loading=true` state.
+        let generationAtFetch = fetchGeneration
         Task { [nextPage] in
-            defer { self.loading = false }
-            do {
-                let resp = try await AccountsApi.accountTokens(address: address, pageIndex: nextPage)
-                await MainActor.run {
-                    self.items.append(contentsOf: resp.result ?? [])
-                    self.table.reloadData()
-                    self.applyEmptyState()
-                    self.nextPage += 1
+            let result = try? await AccountsApi.accountTokens(
+                address: address, pageIndex: nextPage)
+            await MainActor.run {
+                guard generationAtFetch == self.fetchGeneration else { return }
+                self.loading = false
+                guard let resp = result else {
+                    // Silent on error: Android
+                    // `HomeMainFragment.refreshTokenList` mirrors
+                    // this. The home path's automatic-error UX
+                    // is driven by the balance fetch
+                    // (HomeViewController), which hides the
+                    // token table on failure; manual refresh
+                    // surfaces a dialog. Pagination errors here
+                    // simply don't extend the list.
+                    return
                 }
-            } catch {
-                // Silent: Android `HomeMainFragment.refreshTokenList`
-                // mirrors this -- a failed listing leaves cached
-                // state alone. The home path's automatic-error UX is
-                // driven by the balance fetch (HomeViewController),
-                // which hides the token table on failure; manual
-                // refresh surfaces a dialog. Pagination errors here
-                // simply don't extend the list.
+                self.items.append(contentsOf: resp.result ?? [])
+                self.table.reloadData()
+                self.applyEmptyState()
+                self.nextPage += 1
             }
         }
     }

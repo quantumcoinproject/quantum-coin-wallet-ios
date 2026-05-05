@@ -105,14 +105,83 @@ public actor NetworkConfig {
     public var current: NetworkSnapshot { snapshot }
 
     /// Replace the canonical snapshot. Called only from
-    /// `BlockchainNetworkManager.applyActive` whenever the user
+    /// `BlockchainNetworkManager.applyActiveLocked` whenever the user
     /// switches networks, the strongbox unlocks (and custom networks
     /// activate), or a fresh launch initialises the bundled
     /// default. The `Constants.*` mirrors are updated by the
     /// caller for legacy sync read sites; this actor is the
-    /// authoritative source for any signing-related comparison.
+    /// authoritative source for any signing-related comparison
+    /// performed inside an `await` context. Synchronous capture-time
+    /// readers MUST use the `currentSync` static below instead.
     public func apply(_ next: NetworkSnapshot) {
         snapshot = next
+    }
+}
+
+// ----------------------------------------------------------------------
+// Synchronous mirror of the actor's snapshot.
+// What it closes:
+//   The actor `apply(_:)` runs inside a `Task { await ... }`, so when
+//   `BlockchainNetworkManager.applyActiveLocked()` returns, the actor
+//   has NOT yet observed the new snapshot. A synchronous reader on
+//   the same runloop tick (e.g. the user immediately tapping "Review"
+//   in `SendViewController` after a network switch) reads from
+//   `Constants.*` (which IS up-to-date) but `await NetworkConfig.shared.current`
+//   in the same Task hop returns the OLD snapshot - a torn view between
+//   the two sources of truth. This is UNIFIED-007.
+// Why this shape (static NSLock + nonisolated(unsafe) storage):
+//   Cannot be added to the `actor` itself: actors are async-only by
+//   definition, and the whole point of this mirror is a synchronous
+//   read. A standalone NSLock + nonisolated storage provides the
+//   sync-read semantics with the same memory-safety guarantees as
+//   the existing `Constants.*` mirrors. The actor remains the
+//   canonical async source; this is the canonical sync source. The
+//   two are kept in sync because `applyActiveLocked` calls
+//   `publishSync` AND schedules the actor `apply(_:)` in the same
+//   critical section.
+// Tradeoffs:
+//   Slight duplication: the same `NetworkSnapshot` is held in two
+//   places (the actor's `snapshot` and this static `_syncSnapshot`).
+//   Acceptable because the value type is small (a few Strings + an
+//   Int) and both writes happen inside the BlockchainNetworkManager's
+//   `_stateLock` window so they cannot drift.
+// Cross-references:
+//   - UNIFIED-007 (NetworkConfig actor publish lag).
+//   - `BlockchainNetwork.swift` `applyActiveLocked()` is the only
+//     legitimate writer. SendViewController.presentReviewDialog is
+//     the canonical reader (sync capture at "Review" tap).
+//   - The async `current` accessor on the actor remains the right
+//     read for the signing-path SUBMIT-time re-assertion (which is
+//     already inside an `await` context and benefits from actor
+//     ordering guarantees against a mid-flight `apply`).
+// ----------------------------------------------------------------------
+extension NetworkConfig {
+    private static let _syncLock = NSLock()
+    nonisolated(unsafe) private static var _syncSnapshot: NetworkSnapshot = .empty
+
+    /// Synchronous mirror of `current`. Updated in the same critical
+    /// section as `Constants.*` and `ApiClient.basePath` from
+    /// `BlockchainNetworkManager.applyActiveLocked()` so a synchronous
+    /// reader cannot see a torn (Constants vs NetworkConfig) view of
+    /// the active network. Use this from synchronous UI code that
+    /// needs to capture the current network at the same call line as
+    /// `Constants.*` reads. The actor's `current` remains the right
+    /// read inside an `await` context.
+    public static var currentSync: NetworkSnapshot {
+        _syncLock.lock(); defer { _syncLock.unlock() }
+        return _syncSnapshot
+    }
+
+    /// Publish a new snapshot to the synchronous mirror. ONLY
+    /// `BlockchainNetworkManager.applyActiveLocked()` should call this;
+    /// it is in the same critical section that updates `Constants.*`
+    /// and `ApiClient.basePath` so all four observation surfaces
+    /// (Constants, ApiClient, NetworkConfig.currentSync, and the
+    /// async `actor.current` it eventually settles into) see the
+    /// same epoch.
+    public static func publishSync(_ snapshot: NetworkSnapshot) {
+        _syncLock.lock(); defer { _syncLock.unlock() }
+        _syncSnapshot = snapshot
     }
 }
 
