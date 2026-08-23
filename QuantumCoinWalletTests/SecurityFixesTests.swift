@@ -423,21 +423,15 @@ final class SecurityFixesTests: XCTestCase {
             "app.readrelay.quantumcoinapi.com")
     }
 
-    /// End-to-end: `isPinned` MUST return true for the canonical
-    /// scan-API host AND its trailing-dot / mixed-case variants.
-    /// Any future regression that drops the canonicalization
-    /// breaks this test before reaching review.
-    func testTlsPinningIsPinnedMatchesTrailingDotAndCaseVariants() {
-        XCTAssertTrue(
-            TlsPinning.isPinned(host: "app.readrelay.quantumcoinapi.com"),
-            "canonical lowercased no-dot form is pinned.")
-        XCTAssertTrue(
-            TlsPinning.isPinned(host: "app.readrelay.quantumcoinapi.com."),
-            "trailing-dot FQDN form must also pin-match - this is "
-            + "the exact bypass the canonicalHost normalizer closed.")
-        XCTAssertTrue(
-            TlsPinning.isPinned(host: "APP.readrelay.quantumcoinapi.com."),
-            "mixed-case + trailing-dot must also pin-match.")
+    /// Pinning is DISABLED by product decision (2026-08-21): the wallet
+    /// trusts the OS trust store only. `isPinned` must therefore report
+    /// false for every host (the network-config padlock stays honest),
+    /// and the enforcement flag must stay off.
+    func testTlsPinningIsDisabledAndNoHostReportsPinned() {
+        XCTAssertFalse(TlsPinning.kTlsPinningEnforced, "pinning must stay disabled.")
+        XCTAssertFalse(TlsPinning.isPinned(host: "app.readrelay.quantumcoinapi.com"))
+        XCTAssertFalse(TlsPinning.isPinned(host: "app.readrelay.quantumcoinapi.com."))
+        XCTAssertFalse(TlsPinning.isPinned(host: "APP.readrelay.quantumcoinapi.com."))
     }
 
     /// Negative case: the canonicalizer must NOT over-match. An

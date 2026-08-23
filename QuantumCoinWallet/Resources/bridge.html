@@ -869,6 +869,42 @@ var bridge = {
  }
  },
 
+ // Gas estimate for a coin / token send (desktop electron/ipc/gas.ts
+ // txKind "sendCoin" / "sendToken"). Read-only: no keys are staged; the
+ // unsigned request carries `from` so the node can simulate it. Returns
+ // the RAW estimate; Swift applies the kind buffer (0% coin, +10% token)
+ // and falls back to the desktop defaults (21000 / 84000) on error.
+ estimateGas: async function(requestId) {
+ try {
+ if (!requireSDK(requestId)) return;
+ var payload = pullPayload(requestId);
+ if (!payload) return;
+ if (!payload.fromAddress) { sendError(requestId, 'From address required'); return; }
+ await ensureConfigured(payload.chainId, payload.rpcEndpoint);
+ var provider = new QuantumCoinSDK.JsonRpcProvider(
+ payload.rpcEndpoint, payload.chainId);
+ var from = QuantumCoinSDK.getAddress(String(payload.fromAddress));
+ var tx = null;
+ if (payload.txKind === 'sendToken') {
+ if (!QuantumCoinSDK.IERC20) { sendError(requestId, 'IERC20 unavailable'); return; }
+ var token = QuantumCoinSDK.IERC20.connect(
+ QuantumCoinSDK.getAddress(String(payload.contractAddress)), provider);
+ tx = await token.populateTransaction.transfer(
+ QuantumCoinSDK.getAddress(String(payload.toAddress)), BigInt(payload.amount));
+ } else {
+ tx = {
+ to: QuantumCoinSDK.getAddress(String(payload.toAddress)),
+ value: BigInt(payload.value)
+ };
+ }
+ tx.from = from;
+ var gas = await provider.estimateGas(tx);
+ sendResult(requestId, { gasLimit: gas.toString() });
+ } catch (e) {
+ sendError(requestId, e);
+ }
+ },
+
  isValidAddress: async function(requestId, address) {
  try {
  if (!(await ensureInitialized(requestId))) return;

@@ -259,7 +259,11 @@ public enum TlsPinning {
     /// host shape. See the `canonicalHost(_:)` header comment for
     /// the full attack chain.
     public static func isPinned(host: String) -> Bool {
-        return kSpkiPinsByHost[canonicalHost(host)] != nil
+        // Pinning is DISABLED by product decision (2026-08-21): the wallet
+        // trusts the OS trust store only (baseline TLS 1.3 + system-CA
+        // validation still applies). With enforcement off no host is
+        // actually pinned; keep the network-config padlock honest.
+        return kTlsPinningEnforced && kSpkiPinsByHost[canonicalHost(host)] != nil
     }
 
     // -----------------------------------------------------------

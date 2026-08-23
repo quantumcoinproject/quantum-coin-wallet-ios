@@ -944,7 +944,7 @@ dependencies**. Every external piece of code ships in either:
   (`UIKit`, `WebKit`, `CryptoKit`, `Security`, `Foundation`,
   `UniformTypeIdentifiers`), or
 - **A single bundled JavaScript file** (`quantumcoin-bundle.js`,
-  ≈12.3 MiB, MIT-licensed) loaded into a `WKWebView`.
+  ≈3.2 MiB, MIT-licensed) loaded into a `WKWebView`.
 
 That single file exposes **two** browser globals the bridge
 consumes:
@@ -974,9 +974,9 @@ npm versions:
 
 | npm package | Pinned version |
 | --- | --- |
-| [`quantumcoin`](https://www.npmjs.com/package/quantumcoin) | `7.0.12` |
-| [`seed-words`](https://www.npmjs.com/package/seed-words) | `^1.0.2` |
-| [`quantum-coin-js-sdk`](https://www.npmjs.com/package/quantum-coin-js-sdk) | `1.0.35` |
+| [`quantumcoin`](https://www.npmjs.com/package/quantumcoin) | `8.0.3` |
+| [`seed-words`](https://www.npmjs.com/package/seed-words) | `1.1.1` |
+| [`quantum-coin-js-sdk`](https://www.npmjs.com/package/quantum-coin-js-sdk) | `2.1.1` |
 
 ### Native frameworks used
 
@@ -1082,7 +1082,6 @@ is caught by a grep-based invariant test.
     ├── Resources/
     │   ├── bridge.html                JS bridge (the only HTML the WKWebView loads)
     │   ├── quantumcoin-bundle.js      The single JS SDK bundle (SHA-256 pinned)
-    │   ├── quantumcoin-bundle.js.LICENSE.txt
     │   ├── blockchain_networks.json   Bundled MAINNET network seed
     │   └── en_us.json                 230+ localization keys
     ├── Schema/                        StrongboxFileCodec (v=3 portable), StrongboxPadding
@@ -1097,7 +1096,7 @@ is caught by a grep-based invariant test.
 └── QuantumCoinWalletTests/            v=3 strongbox parity + bridge + UX suites
 ```
 
-The bundled `quantumcoin-bundle.js` is currently ~12 MiB and the
+The bundled `quantumcoin-bundle.js` is currently ~3.2 MiB and the
 `en_us.json` catalog carries 230+ keys. Hard counts (source
 files, tests, lines of HTML) drift quickly with each port from
 the Android-parity reference and are intentionally not pinned in
@@ -1243,7 +1242,7 @@ their own.
 
 The bundled `quantumcoin-bundle.js` and its embedded
 third-party libraries are MIT-licensed (see
-[`QuantumCoinWallet/Resources/quantumcoin-bundle.js.LICENSE.txt`](QuantumCoinWallet/Resources/quantumcoin-bundle.js.LICENSE.txt)).
+the npm packages `quantumcoin`, `seed-words` and their dependencies).
 
 ---
 

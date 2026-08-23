@@ -516,6 +516,19 @@ public final class JsBridge: @unchecked Sendable {
     }
 
     @discardableResult
+    /// Read-only gas estimate for a coin / token send. `payload` carries
+    /// `txKind` ("sendCoin" | "sendToken"), `fromAddress`, `toAddress`,
+    /// `value` (wei, coin) or `contractAddress` + `amount` (base units,
+    /// token), `rpcEndpoint`, `chainId`. Envelope data: `{ gasLimit }`.
+    public func estimateGas(payload: [String: Any]) throws -> String {
+        try blockingCall(label: "estimateGas") { cb, rid in
+            let json = try Self.jsonString(payload)
+            JsEngine.shared.registerCallback(requestId: rid, callback: cb)
+            try JsEngine.shared.storePendingPayload(requestId: rid, json: json)
+            JsEngine.shared.evaluate("bridge.estimateGas('\(rid)')")
+        }
+    }
+
     public func isValidAddress(_ address: String) throws -> String {
         try blockingCall { cb, rid in
             JsEngine.shared.registerCallback(requestId: rid, callback: cb)
@@ -1085,6 +1098,16 @@ public extension JsBridge {
     }
 
     @inlinable
+    func estimateGasAsync(payload: [String: Any]) async throws -> String {
+        let payloadData = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        return try await withDetachedThrowing {
+            guard let obj = try JSONSerialization.jsonObject(with: payloadData) as? [String: Any] else {
+                throw JsEngineError.callFailed("estimateGas payload encode failed")
+            }
+            return try JsBridge.shared.estimateGas(payload: obj)
+        }
+    }
+
     func fetchNonceAsync(address: String, rpcEndpoint: String,
         chainId: Int) async throws -> Int {
         try await withDetachedThrowing {

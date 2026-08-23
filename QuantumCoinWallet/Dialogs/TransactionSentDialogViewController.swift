@@ -1,20 +1,16 @@
 // TransactionSentDialogViewController.swift
-// Confirmation dialog shown after a successful Send. Replaces the old
-// `Toast.showMessage("Sent")` so the user can clearly see the
-// transaction id and quickly jump to the explorer or copy the hash to
-// the clipboard.
-// Layout mirrors the Android post-send confirmation:
-// "Your transaction request has been sent."
-// Transaction ID
-// <txhash mono, 2 lines, byTruncatingMiddle> [copy] [explorer]
-// [ OK ]
-// Copy button uses the same `copy_outline` template + black "Copied"
-// toast feedback that the home-screen address row already uses
-// (parity with `WalletsViewController.copy` and the seed-show row).
-// The block-explorer button opens
-// `Constants.BLOCK_EXPLORER_URL + Constants.BLOCK_EXPLORER_TX_HASH_URL.replace({txhash})`,
-// matching the same link pattern the Transactions table uses for its
-// row taps.
+// Send-completed dialog with LIVE on-chain status (desktop
+// #modalSendCompleted + waitForTxSuccess):
+//   "Your transaction request has been sent."
+//   [spinner] Checking transaction status... / Waiting... / Checking...
+//   Transaction ID  <hash>  [copy] [explorer]
+//   [ OK ]
+// The status text rotates every 3600 ms while the scan API is polled
+// every 9000 ms (immediately first, no attempt cap — the user can close
+// any time). Success swaps the spinner for the green check icon and
+// reveals the big check; failure shows the red alert icon.
+// Android reference: SendFragment.sendCompletedDialogFragment +
+// send_completed_dialog_fragment.xml
 
 import UIKit
 
@@ -22,10 +18,22 @@ public final class TransactionSentDialogViewController: ModalDialogViewControlle
 
     public var onClose: (() -> Void)?
 
-    private let txHash: String
+    private static let rotateMs: UInt64 = 3600
+    private static let pollMs = 9000
 
-    public init(txHash: String) {
+    private let txHash: String
+    private let fromAddress: String
+    private let statusSpinner = UIActivityIndicatorView(style: .medium)
+    private let statusIcon = UIImageView()
+    private let statusLabel = UILabel()
+    private let bigCheck = UIImageView()
+    private var rotateTask: Task<Void, Never>?
+    private var poller: TxStatusPoller?
+    private var settled = false
+
+    public init(txHash: String, fromAddress: String) {
         self.txHash = txHash
+        self.fromAddress = fromAddress
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -41,121 +49,136 @@ public final class TransactionSentDialogViewController: ModalDialogViewControlle
         title.textColor = UIColor(named: "colorCommon6") ?? .label
         title.numberOfLines = 0
 
+        // Big 50pt check, revealed only once the tx confirms.
+        bigCheck.image = StatusIcons.success(size: 50)
+        bigCheck.contentMode = .scaleAspectFit
+        bigCheck.isHidden = true
+        bigCheck.heightAnchor.constraint(equalToConstant: 50).isActive = true
+
+        // Live status row.
+        statusSpinner.color = UIColor(named: "colorCommon6") ?? .white
+        statusSpinner.hidesWhenStopped = true
+        statusSpinner.startAnimating()
+        statusIcon.contentMode = .scaleAspectFit
+        statusIcon.isHidden = true
+        statusIcon.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        statusIcon.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        statusLabel.font = Typography.body(13)
+        statusLabel.textColor = UIColor(named: "colorCommon6") ?? .label
+        statusLabel.numberOfLines = 0
+        let statusRow = UIStackView(arrangedSubviews: [statusSpinner, statusIcon, statusLabel])
+        statusRow.axis = .horizontal
+        statusRow.spacing = 10
+        statusRow.alignment = .center
+
         let header = UILabel()
         header.text = L.getTransactionIdByLangValues()
         header.font = Typography.boldTitle(13)
         header.textColor = UIColor(named: "colorCommon6") ?? .label
-        header.numberOfLines = 1
+        header.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let buttons = IconButton.copyAndExplorer(
+            copyValue: { [txHash] in txHash },
+            explorerUrl: { [txHash] in UrlBuilder.txUrl(txHash) })
+        let headerRow = UIStackView(arrangedSubviews: [header, buttons])
+        headerRow.axis = .horizontal
+        headerRow.alignment = .center
 
-        let value = UILabel()
+        let value = UITextView()
         value.text = txHash
+        value.isEditable = false
+        value.isScrollEnabled = false
+        value.backgroundColor = .clear
+        value.textContainerInset = .zero
+        value.textContainer.lineFragmentPadding = 0
+        value.textContainer.lineBreakMode = .byCharWrapping
         value.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        value.numberOfLines = 2
-        value.lineBreakMode = .byTruncatingMiddle
         value.textColor = UIColor(named: "colorCommon6") ?? .label
-        value.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let copyButton = makeChromeIconButton(
-            named: "copy_outline",
-            accessibility: L.getCopyByLangValues()) { [weak self] in
-            guard let self = self, !self.txHash.isEmpty else { return }
-            // Tx-hash copy. Tx hashes are public on
-            // chain but Universal Clipboard replication still leaks
-            // wallet-activity timing to other devices on the iCloud
-            // account. Hardened wrapper applies. See Pasteboard.swift.
-            Pasteboard.copySensitive(self.txHash)
-            Toast.showMessage(L.getCopiedByLangValues())
-        }
-
-        let explorerButton = makeChromeIconButton(
-            named: "address_explore",
-            accessibility: L.getBlockExplorerTitleByLangValues()) { [weak self] in
-            guard let self = self, !self.txHash.isEmpty else { return }
-            self.openExplorer()
-        }
-
-        let iconRow = UIStackView(arrangedSubviews: [copyButton, explorerButton])
-        iconRow.axis = .horizontal
-        iconRow.spacing = 12
-        iconRow.alignment = .center
-
-        let valueRow = UIStackView(arrangedSubviews: [value, iconRow])
-        valueRow.axis = .horizontal
-        valueRow.alignment = .center
-        valueRow.spacing = 12
-
-        let txStack = UIStackView(arrangedSubviews: [header, valueRow])
+        let txStack = UIStackView(arrangedSubviews: [headerRow, value])
         txStack.axis = .vertical
-        txStack.alignment = .fill
         txStack.spacing = 4
 
-        // Right-aligned OK pill, mirroring the Cancel/OK row style on
-        // the review dialog and the network-add screen.
         let okButton = GreenPillButton(type: .system)
         okButton.setTitle(L.getOkByLangValues(), for: .normal)
         okButton.addTarget(self, action: #selector(tapOk), for: .touchUpInside)
         okButton.heightAnchor.constraint(equalToConstant: 43).isActive = true
         okButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 96).isActive = true
-        let leadingSpacer = UIView()
-        leadingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        leadingSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let buttonRow = UIStackView(arrangedSubviews: [leadingSpacer, okButton])
+        let spacer = UIView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let buttonRow = UIStackView(arrangedSubviews: [spacer, okButton])
         buttonRow.axis = .horizontal
-        buttonRow.spacing = 0
         buttonRow.alignment = .center
-        buttonRow.distribution = .fill
 
-        let stack = UIStackView(arrangedSubviews: [title, txStack, buttonRow])
+        let stack = UIStackView(arrangedSubviews: [bigCheck, title, statusRow, txStack, buttonRow])
         stack.axis = .vertical
         stack.alignment = .fill
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(stack)
         NSLayoutConstraint.activate([
-                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
-                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
-                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
-                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
-                card.widthAnchor.constraint(equalToConstant: 340)
-            ])
-
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 20),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -20),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            card.widthAnchor.constraint(equalToConstant: 340)
+        ])
         view.installPressFeedbackRecursive()
+
+        startWatching()
     }
 
-    // MARK: - Helpers
-
-    private func makeChromeIconButton(named: String,
-        accessibility: String,
-        action: @escaping () -> Void) -> UIButton {
-        let b = UIButton(type: .custom)
-        let img = UIImage(named: named)?.withRenderingMode(.alwaysTemplate)
-        b.setImage(img, for: .normal)
-        b.tintColor = UIColor(named: "colorCommon6") ?? .label
-        b.imageView?.contentMode = .scaleAspectFit
-        b.widthAnchor.constraint(equalToConstant: 30).isActive = true
-        b.heightAnchor.constraint(equalToConstant: 30).isActive = true
-        b.accessibilityLabel = accessibility
-        b.addAction(UIAction(handler: { _ in action() }), for: .touchUpInside)
-        return b
-    }
-
-    private func openExplorer() {
-        let base = Constants.BLOCK_EXPLORER_URL
-        guard !base.isEmpty else {
-            Toast.showError(Localization.shared.getNoActiveNetworkByLangValues())
-            return
+    private func startWatching() {
+        let L = Localization.shared
+        let statuses = [
+            L.lang("send-status-checking", fallback: "Checking transaction status..."),
+            L.lang("send-status-waiting", fallback: "Waiting..."),
+            L.lang("send-status-checking-short", fallback: "Checking...")
+        ]
+        statusLabel.text = statuses[0]
+        let start = Date()
+        rotateTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: TransactionSentDialogViewController.rotateMs * 1_000_000)
+                guard let self, !self.settled, !Task.isCancelled else { return }
+                let elapsedMs = Int(Date().timeIntervalSince(start) * 1000)
+                let idx = (elapsedMs / Int(TransactionSentDialogViewController.rotateMs)) % statuses.count
+                self.statusLabel.text = statuses[idx]
+            }
         }
-        // Tx-hash URL composition runs through the
-        // validated wrapper so a malformed hash (which could only
-        // happen via a Swift-side regression today, but in defense-
-        // in-depth) cannot pivot the user into Safari at an
-        // attacker-chosen URL.
-        guard let url = UrlBuilder.blockExplorerTxUrl(
-            base: base, txHash: txHash) else { return }
-        UIApplication.shared.open(url)
+        poller = TxStatusPoller.start(address: fromAddress, txHash: txHash,
+            intervalMs: TransactionSentDialogViewController.pollMs, maxPolls: 0, sleepFirst: false,
+            listener: TxStatusPoller.Listener(
+                onSucceeded: { [weak self] in
+                    guard let self, !self.settled else { return }
+                    self.settle()
+                    self.statusIcon.image = StatusIcons.success()
+                    self.statusIcon.isHidden = false
+                    self.statusLabel.text = L.lang("send-transaction-succeeded",
+                                                   fallback: "Transaction completed successfully.")
+                    self.bigCheck.isHidden = false
+                },
+                onFailed: { [weak self] error in
+                    guard let self, !self.settled else { return }
+                    self.settle()
+                    self.statusIcon.image = StatusIcons.failed()
+                    self.statusIcon.isHidden = false
+                    var text = L.lang("send-transaction-failed", fallback: "Transaction failed.")
+                    if let error, !error.isEmpty { text += " " + String(error.prefix(300)) }
+                    self.statusLabel.text = text
+                }))
+    }
+
+    private func settle() {
+        settled = true
+        rotateTask?.cancel()
+        rotateTask = nil
+        statusSpinner.stopAnimating()
     }
 
     @objc private func tapOk() {
+        settle()
+        poller?.cancel()
+        poller = nil
         dismiss(animated: true) { [onClose] in onClose?() }
     }
 }

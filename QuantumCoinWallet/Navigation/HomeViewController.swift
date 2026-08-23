@@ -33,7 +33,7 @@ public final class HomeViewController: UIViewController {
     private let centerStripView = CenterStripView()
     private let containerView = UIView()
     private let offlineOverlayView = OfflineOverlayView()
-    private let bottomNavView = BottomNavView()
+    private let drawerView = DrawerView()
 
     // MARK: - Child
 
@@ -104,7 +104,7 @@ public final class HomeViewController: UIViewController {
         view.backgroundColor = UIColor(named: "colorBackground") ?? .systemBackground
 
         [topBannerView, centerStripView,
-            containerView, offlineOverlayView, bottomNavView].forEach {
+            containerView, offlineOverlayView, drawerView].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview($0)
         }
@@ -117,7 +117,8 @@ public final class HomeViewController: UIViewController {
         networkChipButton.addTarget(self, action: #selector(openNetworkPicker), for: .touchUpInside)
         topBannerView.setNetworkChipView(networkChipButton)
 
-        bottomNavView.onSelect = { [weak self] tab in self?.handleBottomNavTap(tab) }
+        topBannerView.onBurgerTap = { [weak self] in self?.drawerView.open() }
+        drawerView.onSelect = { [weak self] item in self?.handleDrawerSelect(item) }
         centerStripView.onSend = { [weak self] in self?.presentSendFlow() }
         centerStripView.onReceive = { [weak self] in self?.presentReceive() }
         centerStripView.onTransactions = { [weak self] in self?.presentTransactions() }
@@ -161,9 +162,10 @@ public final class HomeViewController: UIViewController {
                 offlineOverlayView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
                 offlineOverlayView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor),
 
-                bottomNavView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                bottomNavView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                bottomNavView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+                drawerView.topAnchor.constraint(equalTo: view.topAnchor),
+                drawerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                drawerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                drawerView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
             ])
 
         // Seed the swappable container anchors with `.mainHome` defaults.
@@ -171,7 +173,7 @@ public final class HomeViewController: UIViewController {
         containerTopConstraint = containerView.topAnchor.constraint(
             equalTo: centerStripView.bottomAnchor, constant: 4)
         containerBottomConstraint = containerView.bottomAnchor.constraint(
-            equalTo: bottomNavView.topAnchor)
+            equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         containerTopConstraint?.isActive = true
         containerBottomConstraint?.isActive = true
 
@@ -596,17 +598,18 @@ public final class HomeViewController: UIViewController {
             networkChipButton.isHidden = false
             centerStripView.isHidden = false
             centerStripView.refreshBalanceLoadingAppearanceIfNeeded()
-            bottomNavView.isHidden = false
+            topBannerView.setBurgerHidden(false)
             case .onboarding:
             topBannerView.isHidden = false
             networkChipButton.isHidden = true
             centerStripView.isHidden = true
-            bottomNavView.isHidden = true
+            topBannerView.setBurgerHidden(true)
+            drawerView.close()
             case .innerFragment:
             topBannerView.isHidden = false
             networkChipButton.isHidden = true
             centerStripView.isHidden = true
-            bottomNavView.isHidden = false
+            topBannerView.setBurgerHidden(false)
         }
 
         // Layout collapse - rebind container's top/bottom so hidden views
@@ -626,13 +629,9 @@ public final class HomeViewController: UIViewController {
             topConstant = 8
         }
 
-        let bottomAnchorView: NSLayoutYAxisAnchor
-        switch type {
-            case .mainHome, .innerFragment:
-            bottomAnchorView = bottomNavView.topAnchor
-            case .onboarding:
-            bottomAnchorView = view.safeAreaLayoutGuide.bottomAnchor
-        }
+        // No footer any more: the content container always extends to
+        // the bottom safe area (the freed space goes to the body).
+        let bottomAnchorView = view.safeAreaLayoutGuide.bottomAnchor
 
         containerTopConstraint = containerView.topAnchor.constraint(
             equalTo: topAnchorView, constant: topConstant)
@@ -669,14 +668,13 @@ public final class HomeViewController: UIViewController {
         present(BlockchainNetworkSelectDialogViewController(), animated: true)
     }
 
-    private func handleBottomNavTap(_ tab: BottomNavView.Tab) {
-        switch tab {
+    /// Burger menu rows (replaces the bottom navigation).
+    private func handleDrawerSelect(_ item: DrawerView.Item) {
+        switch item {
             case .wallets:
             lastSelectedTab = .wallets
             beginTransactionNow(WalletsViewController()); apply(.innerFragment)
             case .settings:
-            // Capture the current primary tab so `popFromSettings`
-            // knows where back should land, then route into Settings.
             lastTabBeforeSettings = lastSelectedTab
             beginTransactionNow(SettingsViewController()); apply(.innerFragment)
         }

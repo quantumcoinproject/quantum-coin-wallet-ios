@@ -44,6 +44,19 @@ public final class Localization {
 
     // MARK: - Helpers
 
+    /// Generic langValues lookup with a code-side fallback (keys that
+    /// have no dedicated getter, e.g. the gas / send-status strings).
+    public func lang(_ key: String, fallback: String) -> String {
+        let v = langString(key)
+        return v.isEmpty ? fallback : v
+    }
+
+    /// Generic errors-section lookup with a code-side fallback.
+    public func err(_ key: String, fallback: String) -> String {
+        let v = errString(key)
+        return v.isEmpty ? fallback : v
+    }
+
     private func langString(_ key: String) -> String {
         (lang[key] as? String) ?? ""
     }

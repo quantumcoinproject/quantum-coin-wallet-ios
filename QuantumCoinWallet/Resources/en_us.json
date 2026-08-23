@@ -202,6 +202,30 @@
       "to-address": "To Address",
       "send-quantity": "Quantity",
       "chain-id-suffix": "chain",
+
+      "gas": "Gas",
+
+      "gas-limit": "Gas limit (gas-units)",
+
+      "gas-fee": "Estimated gas fee (coins)",
+
+      "tx-step-invalid-gas": "Enter a valid positive gas limit.",
+
+      "pleaseWaitEstimatingGas": "Please wait, estimating gas...",
+
+      "send-status-checking": "Checking transaction status...",
+
+      "send-status-waiting": "Waiting...",
+
+      "send-status-checking-short": "Checking...",
+
+      "send-transaction-succeeded": "Transaction completed successfully.",
+
+      "send-transaction-failed": "Transaction failed.",
+
+      "action": "Action",
+
+      "token-quantity": "Token quantity",
       "tamper-jailbreak-title": "Reduced device protection",
       "tamper-jailbreak-message": "This device shows signs of jailbreak. The OS-level isolation that protects your wallet is bypassed - apps you trust can be modified by other apps you have installed. Continue at your own risk, or quit?",
       "tamper-continue-at-risk": "Continue at my own risk",
@@ -233,6 +257,7 @@
       "notification-channel-description": "You are about to create to a quantum resistant wallet."
     },
     "errors": {
+      "invalidValue": "Invalid value",
       "selectOption": "Please select an option.",
       "retypePasswordMismatch": "Retype the password correctly",
       "passwordSpec": "Enter a minimum of 12 characters for password",

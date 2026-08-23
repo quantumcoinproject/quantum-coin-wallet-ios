@@ -17,6 +17,8 @@ public final class TopBannerView: UIView {
     private let gradient = CAGradientLayer()
     private let logoView = UIImageView()
     private let titleLabel = UILabel()
+    private let burgerButton = UIButton(type: .system)
+    public var onBurgerTap: (() -> Void)?
 
     /// Right-aligned slot at the top of the banner that the controller
     /// can drop the network-chip button into. Matches Android's
@@ -71,7 +73,8 @@ public final class TopBannerView: UIView {
     /// title in 16pt bold black below it. Mirrors `home_activity.xml`
     /// `imageView_home_logo` + `textView_home_tile`.
     private func installContent() {
-        logoView.image = UIImage(named: "Logo") ?? UIImage(systemName: "bitcoinsign.circle")
+        // Header mark (quantum-coin-2048.png); the app icon is unchanged.
+        logoView.image = UIImage(named: "HeaderLogo") ?? UIImage(named: "Logo") ?? UIImage(systemName: "bitcoinsign.circle")
         logoView.contentMode = .scaleAspectFit
 
         titleLabel.text = Localization.shared.getTitleByLangValues()
@@ -79,7 +82,26 @@ public final class TopBannerView: UIView {
         titleLabel.textColor = UIColor(named: "colorCommon6") ?? .black
         titleLabel.textAlignment = .center
 
-        [logoView, titleLabel, networkChipContainer].forEach {
+        // Burger menu (replaces the bottom navigation).
+        burgerButton.setImage(UIImage(systemName: "line.3.horizontal")?.withRenderingMode(.alwaysTemplate), for: .normal)
+        burgerButton.tintColor = UIColor(named: "colorCommon6") ?? .label
+        // Styled tile: theme-aware glass fill + 1pt groove border, 9pt radius.
+        let ink = UIColor(named: "colorCommon6") ?? .label
+        burgerButton.backgroundColor = ink.withAlphaComponent(0.08)
+        burgerButton.layer.cornerRadius = 9
+        burgerButton.layer.borderWidth = 1
+        burgerButton.layer.borderColor = ink.withAlphaComponent(0.25).cgColor
+        burgerButton.layer.masksToBounds = true
+        burgerButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 7, bottom: 7, right: 7)
+        burgerButton.addAction(UIAction { [weak self] _ in
+            self?.burgerButton.backgroundColor = ink.withAlphaComponent(0.16) }, for: .touchDown)
+        burgerButton.addAction(UIAction { [weak self] _ in
+            self?.burgerButton.backgroundColor = ink.withAlphaComponent(0.08) },
+            for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        burgerButton.accessibilityLabel = Localization.shared.getWalletsByLangValues()
+        burgerButton.addAction(UIAction { [weak self] _ in self?.onBurgerTap?() }, for: .touchUpInside)
+
+        [logoView, titleLabel, networkChipContainer, burgerButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
@@ -121,12 +143,21 @@ public final class TopBannerView: UIView {
                 // Network-chip slot in the top-right corner. The controller
                 // installs its own button via `setNetworkChipView(_:)` and
                 // pins it to the container edges - we just reserve the slot.
+                burgerButton.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8),
+                burgerButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                burgerButton.widthAnchor.constraint(equalToConstant: 36),
+                burgerButton.heightAnchor.constraint(equalToConstant: 36),
+
                 networkChipContainer.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 4),
                 networkChipContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
             ])
     }
 
     /// Update the banner's height in points. Pass `0` to collapse.
+    public func setBurgerHidden(_ hidden: Bool) {
+        burgerButton.isHidden = hidden
+    }
+
     public func setHeight(_ points: CGFloat) {
         heightConstraint?.constant = max(0, points)
     }
@@ -148,19 +179,7 @@ public final class TopBannerView: UIView {
     }
 }
 
-// MARK: - UIColor ARGB hex helper
-
-fileprivate extension UIColor {
-    /// Decode an Android-style 0xAARRGGBB literal. Used for the banner
-    /// gradient stops in `gradient_layer.xml` which are alpha-prefixed.
-    convenience init(argbHex: UInt32) {
-        let a = CGFloat((argbHex >> 24) & 0xFF) / 255.0
-        let r = CGFloat((argbHex >> 16) & 0xFF) / 255.0
-        let g = CGFloat((argbHex >> 8) & 0xFF) / 255.0
-        let b = CGFloat( argbHex & 0xFF) / 255.0
-        self.init(red: r, green: g, blue: b, alpha: a)
-    }
-}
+// (UIColor(argbHex:) lives in Theme/ColorHex.swift)
 
 // MARK: - Center strip
 
@@ -478,110 +497,4 @@ public final class OfflineOverlayView: UIView {
     }
 
     @objc private func tapRetry() { onRetry?() }
-}
-
-// MARK: - Bottom nav
-
-public final class BottomNavView: UIView {
-
-    public enum Tab { case wallets, settings }
-
-    public var onSelect: ((Tab) -> Void)?
-
-    public override init(frame: CGRect) {
-        super.init(frame: frame)
-        // Transparent so the bottom nav blends with the parent
-        // controller's background instead of standing out as a
-        // distinct card. Mirrors Android's `colorCommon7` (which
-        // collapses to the surface color in both themes).
-        backgroundColor = .clear
-        let L = Localization.shared
-        // Two-tab bottom nav: Wallets + Settings. Icons sourced from
-        // the `m_*` template imagesets so they tint with
-        // `colorCommon6` and read identically in light / dark mode.
-        let b1 = makeTab("m_wallets", title: L.getWalletsByLangValues(), tag: 0)
-        let b4 = makeTab("m_settings", title: L.getSettingsByLangValues(), tag: 3)
-        let stack = UIStackView(arrangedSubviews: [b1, b4])
-        stack.axis = .horizontal
-        stack.distribution = .fillEqually
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        // Constrain the two-tab cluster to the centre half of the
-        // bottom-nav strip rather than spreading the icons edge-to-
-        // edge. With `.fillEqually` each tab then occupies a quarter
-        // of the strip width and the two icons centre around the
-        // 3/8 and 5/8 marks - visually tucked together near the
-        // middle, matching the user-requested layout after removing
-        // the Help and Block Explorer tabs.
-        NSLayoutConstraint.activate([
-                stack.topAnchor.constraint(equalTo: topAnchor),
-                stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-                stack.centerXAnchor.constraint(equalTo: centerXAnchor),
-                stack.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.5),
-                heightAnchor.constraint(equalToConstant: 56)
-            ])
-
-        // Apply alpha-dim press feedback to all tab UIControls.
-        installPressFeedbackRecursive()
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    /// Icon-on-top, label-below tab matching Android's Material
-    /// `BottomNavigationView` (`labelVisibilityMode="labeled"`). The
-    /// icon view is pinned to 24x24 explicitly so all four tabs render
-    /// at the same visual size regardless of the inherent path
-    /// bounds inside each PDF asset.
-    private func makeTab(_ icon: String, title: String, tag: Int) -> UIControl {
-        let tab = UIControl()
-        tab.tag = tag
-        tab.backgroundColor = .clear
-
-        let iv = UIImageView(
-            image: UIImage(named: icon)?.withRenderingMode(.alwaysTemplate))
-        iv.tintColor = UIColor(named: "colorCommon6") ?? .label
-        iv.contentMode = .scaleAspectFit
-        iv.translatesAutoresizingMaskIntoConstraints = false
-
-        let label = UILabel()
-        label.text = title
-        label.font = Typography.body(11)
-        label.textColor = UIColor(named: "colorCommon6") ?? .label
-        label.textAlignment = .center
-        label.numberOfLines = 1
-        label.adjustsFontSizeToFitWidth = true
-        label.minimumScaleFactor = 0.8
-
-        let column = UIStackView(arrangedSubviews: [iv, label])
-        column.axis = .vertical
-        column.alignment = .center
-        column.spacing = 2
-        column.isUserInteractionEnabled = false
-        column.translatesAutoresizingMaskIntoConstraints = false
-        tab.addSubview(column)
-
-        NSLayoutConstraint.activate([
-                iv.widthAnchor.constraint(equalToConstant: 24),
-                iv.heightAnchor.constraint(equalToConstant: 24),
-                column.centerXAnchor.constraint(equalTo: tab.centerXAnchor),
-                column.centerYAnchor.constraint(equalTo: tab.centerYAnchor),
-                column.leadingAnchor.constraint(
-                    greaterThanOrEqualTo: tab.leadingAnchor, constant: 4),
-                column.trailingAnchor.constraint(
-                    lessThanOrEqualTo: tab.trailingAnchor, constant: -4)
-            ])
-
-        tab.addAction(UIAction(handler: { [weak self] _ in
-                self?.dispatchTap(tag: tag)
-            }), for: .touchUpInside)
-        return tab
-    }
-
-    private func dispatchTap(tag: Int) {
-        let tab: Tab
-        switch tag {
-            case 0: tab = .wallets
-            default: tab = .settings
-        }
-        onSelect?(tab)
-    }
 }

@@ -94,6 +94,37 @@ public enum UrlBuilder {
             isValueValid: QuantumCoinAddress.isValid)
     }
 
+    /// Build a block-explorer URL for a token contract
+    /// (`/token/{address}`). Returns `nil` on validation failure.
+    public static func blockExplorerTokenUrl(base: String, address: String) -> URL? {
+        return substituted(
+            base: base,
+            template: Constants.BLOCK_EXPLORER_TOKEN_URL,
+            placeholder: "{address}",
+            value: address,
+            isValueValid: QuantumCoinAddress.isValid)
+    }
+
+    /// Active network's explorer base (Constants mirror, else the
+    /// BlockchainNetworkManager's active network). Empty when none.
+    public static func explorerBase() -> String {
+        let primary = Constants.BLOCK_EXPLORER_URL
+        if !primary.isEmpty { return primary }
+        return BlockchainNetworkManager.shared.active?.blockExplorerUrl ?? ""
+    }
+
+    public static func accountUrl(_ address: String) -> URL? {
+        blockExplorerAccountUrl(base: explorerBase(), address: address)
+    }
+
+    public static func tokenUrl(_ address: String) -> URL? {
+        blockExplorerTokenUrl(base: explorerBase(), address: address)
+    }
+
+    public static func txUrl(_ txHash: String) -> URL? {
+        blockExplorerTxUrl(base: explorerBase(), txHash: txHash)
+    }
+
     /// Build a block-explorer URL for the supplied transaction hash.
     /// Returns `nil` if the hash fails strict regex validation.
     public static func blockExplorerTxUrl(base: String, txHash: String) -> URL? {

@@ -407,12 +407,22 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         sendRow.axis = .horizontal
         sendRow.alignment = .center
 
+        // Title + gas chip (fee label + pump; tap to set the gas limit).
+        let gasChipView = GasChipView()
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let titleRow = UIStackView(arrangedSubviews: [titleLabel, gasChipView])
+        titleRow.axis = .horizontal
+        titleRow.alignment = .center
+        titleRow.spacing = 8
+        gasChip = GasChipController(host: self, walletAddress: currentAddress(), chip: gasChipView, kind: .sendCoin)
+        amountField.addTarget(self, action: #selector(amountEdited), for: .editingChanged)
+
         // Outer vertical stack. `setCustomSpacing(after:)` reproduces
         // the per-row margins the Android `LinearLayout` uses inside
         // the card.
         let stack = UIStackView(arrangedSubviews: [
                 backBar,
-                titleLabel,
+                titleRow,
                 divider,
                 networkRow,
                 unrecognizedToggleRow,
@@ -430,7 +440,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         stack.alignment = .fill
         stack.spacing = 6
         stack.setCustomSpacing(4, after: backBar)
-        stack.setCustomSpacing(8, after: titleLabel)
+        stack.setCustomSpacing(8, after: titleRow)
         stack.setCustomSpacing(12, after: divider)
         stack.setCustomSpacing(12, after: networkRow)
         stack.setCustomSpacing(8, after: unrecognizedToggleRow)
@@ -647,6 +657,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         }
         rebuildAssetMenu()
         refreshBalance()
+        gasChip?.reset()
+        scheduleSendGasEstimate()
     }
 
     /// Friendly display name for the native coin -- mirrors the
@@ -812,6 +824,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         let typed = toField.text ?? ""
         toFieldPlaceholder.isHidden = !typed.isEmpty
         scheduleAddressValidation()
+        scheduleSendGasEstimate()
     }
 
     /// Cancels any in-flight validation, hides the explorer button
@@ -1264,101 +1277,85 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
     /// not displayed because the user cannot meaningfully
     /// act on the value. The constants are still a pinned
     /// cap on the gas the signed transaction will burn.
-    nonisolated private static let gasLimitNative = "21000"
-    nonisolated private static let gasLimitToken = "90000"
 
-    private func presentReviewDialog(to: String, amount: String) {
-        let from = currentAddress()
-        let networkName = BlockchainNetworkManager.shared.active?.name ?? ""
-        // (notes):
-        // capture the active network snapshot AND the From-address
-        // at the moment the user taps Review. Both values are
-        // forwarded through the unlock + submit pipeline and
-        // re-asserted at submit time. If the user (or a programmatic
-        // background task) changes networks or switches the active
-        // wallet between Review and Submit, the bridge call is
-        // aborted with a `NetworkAssertionError` and the user sees
-        // an explicit "review and resubmit" message. This binds the
-        // signed-transaction's chain-id and from-address to the
-        // values the user CONFIRMED, not whatever happens to be
-        // active when scrypt finishes.
-        // Use the synchronous mirror `NetworkConfig.currentSync`
-        // here (added by the related race-condition fix) so the snapshot
-        // capture happens at the SAME runloop tick as the
-        // `BlockchainNetworkManager.shared.active?.name` read above.
-        // The previous shape captured via `await NetworkConfig.shared.current`
-        // INSIDE a detached Task, which created a torn-view window:
-        // a network switch on the main queue between this point
-        // and the actor's hop could leave `networkName` showing one
-        // value (read sync, pre-switch) and `captured` showing
-        // another (read async, post-switch). The signing path's
-        // submit-time re-assertion at line ~1281 below continues
-        // using `await NetworkConfig.shared.current` because that
-        // call is already inside an `await` context and benefits
-        // from the actor's serialisation guarantees.
-        let captured = NetworkConfig.currentSync
-        let capturedFrom = from
-        Task { [weak self] in
-// the TO checksum MUST come from the SDK or the
-            // dialog MUST NOT render. A silent fallback to the
-            // raw lowercased form would show the recipient as a
-            // visually-correct-looking address that the user cannot
-            // case-checksum-compare against the address they expect -
-            // the entire purpose of the review dialog is defeated.
-            // The FROM address is the user's own wallet (never
-            // attacker-influenced for the duration of this screen);
-            // a missing checksum on FROM is a UX regression rather
-            // than a signing-correctness one, so we keep the
-            // permissive fallback there.
-            let toChecksum: String
-            do {
-                let envTo = try await JsBridge.shared.getChecksumAddressAsync(to)
-                guard let canonical = SendViewController.parseChecksumAddress(envTo) else {
-                    await MainActor.run {
-                        Toast.showError(Localization.shared.getQuantumAddrByErrors())
-                    }
-                    return
-                }
-                toChecksum = canonical
-            } catch {
-                await MainActor.run {
-                    Toast.showError(Localization.shared.getQuantumAddrByErrors())
-                }
-                return
+    // MARK: - Gas chip (desktop scheduleSendGasEstimate)
+
+    private var gasChip: GasChipController?
+    /// Gas limit the user agreed to in the review (signed as-is).
+    private var pendingGasLimit: Int64 = 0
+
+    /// 2 s debounce after any edit of address / amount / asset; nothing
+    /// is requested until the form is complete enough. Buffer: 0% for a
+    /// coin send, +10% for a token send.
+    private func scheduleSendGasEstimate() {
+        guard let gasChip else { return }
+        gasChip.kind = selectedTokenContract == nil ? .sendCoin : .sendToken
+        gasChip.schedule { [weak self] in
+            guard let self else { return nil }
+            let to = (self.toField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let amount = (self.amountField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: ",", with: ".")
+            guard QuantumCoinAddress.isValid(to), Self.isValidAmount(amount) else { return nil }
+            var p: [String: Any] = ["toAddress": to]
+            if let contract = self.selectedTokenContract,
+               let token = self.tokens.first(where: { $0.contractAddress == contract }) {
+                p["contractAddress"] = contract
+                p["amount"] = CoinUtils.parseUnits(amount, decimals: token.decimals ?? CoinUtils.ETHER_DECIMALS)
+            } else {
+                p["value"] = CoinUtils.parseEther(amount)
             }
-            // FROM address - permissive fallback is intentional,
-            // see header comment above.
-            let fromChecksum: String
-            do {
-                let envFrom = try await JsBridge.shared.getChecksumAddressAsync(from)
-                fromChecksum = SendViewController.parseChecksumAddress(envFrom) ?? from
-            } catch {
-                fromChecksum = from
-            }
-            await MainActor.run {
-                guard let self = self else { return }
-                let dlg = TransactionReviewDialogViewController(
-                    asset: self.currentAssetReviewText(),
-                    assetContract: self.currentAssetContractAddress(),
-                    fromAddress: fromChecksum,
-                    toAddress: toChecksum,
-                    amount: amount,
-                    networkName: networkName,
-                    chainId: captured.chainId)
-                dlg.onConfirm = { [weak self] in
-                    self?.presentUnlockAndSend(
-                        to: to, amount: amount,
-                        capturedSnapshot: captured,
-                        capturedFromAddress: capturedFrom)
-                }
-                self.present(dlg, animated: true)
-            }
+            return p
         }
     }
 
-    /// Parse `bridge.getChecksumAddress`'s
-    /// `{"data":{"address":"..."}}` envelope. Returns the
-    /// checksummed address on success; nil if the schema drifts.
+    @objc private func amountEdited() {
+        scheduleSendGasEstimate()
+    }
+
+    // MARK: - Review (desktop one-dialog review: fields + gas + "i agree")
+
+    private func presentReviewDialog(to: String, amount: String) {
+        let from = currentAddress()
+        let captured = NetworkConfig.currentSync
+        let capturedFrom = from
+        guard let gasChip else { return }
+        gasChip.kind = selectedTokenContract == nil ? .sendCoin : .sendToken
+        gasChip.ensureReady { [weak self] in
+            guard let self else { return }
+            let L = Localization.shared
+            let gas = gasChip.resolve()
+            guard gas.gasLimit > 0 else {
+                self.present(MessageInformationDialogViewController.error(
+                    title: L.getErrorTitleByLangValues(),
+                    message: L.lang("tx-step-invalid-gas", fallback: "Enter a valid positive gas limit.")),
+                    animated: true)
+                return
+            }
+            self.pendingGasLimit = gas.gasLimit
+            let isCoin = self.selectedTokenContract == nil
+            let token = self.selectedTokenContract.flatMap { c in self.tokens.first(where: { $0.contractAddress == c }) }
+            let sym = (token?.symbol ?? "").trimmingCharacters(in: .whitespaces)
+            let name = (token?.name ?? "").trimmingCharacters(in: .whitespaces)
+            let spec = ReviewSpec()
+                .action(isCoin ? L.getSendByLangValues() + " " + self.nativeAssetTitle()
+                               : L.getSendByLangValues() + " " + name + " (" + sym + ")")
+                .contractAddress(isCoin ? nil : self.selectedTokenContract)
+                .contractIsToken(!isCoin)
+                .fromAddress(from)
+                .toAddress(to)
+                .quantityValue(isCoin ? amount : "0")
+                .tokenQuantityValue(isCoin ? nil : amount + " " + sym)
+                .gas(gas.gasLimit, GasFee.formatQ(gas.feeNumber))
+                .networkText(ReviewSpec.networkText())
+            let dlg = TransactionReviewDialogViewController(spec: spec, walletAddress: from)
+            dlg.onConfirm = { [weak self] in
+                self?.presentUnlockAndSend(to: to, amount: amount,
+                                           capturedSnapshot: captured, capturedFromAddress: capturedFrom)
+            }
+            self.present(dlg, animated: true)
+        }
+    }
+
     private static func parseChecksumAddress(_ envelope: String) -> String? {
         guard let data = envelope.data(using: .utf8),
         let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1426,8 +1423,10 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
             // (and its CALayers) on a background thread when the
             // task closure releases. See the prior layout-engine
             // crash fix.
+            let gasLimitText = String(pendingGasLimit > 0 ? pendingGasLimit
+                : (selectedTokenContract == nil ? GasKind.sendCoin.defaultGas : GasKind.sendToken.defaultGas))
             Task.detached(priority: .userInitiated) {
-                [weak self, weak dlg, weak wait, selectedTokenContract, weiAmount] in
+                [weak self, weak dlg, weak wait, selectedTokenContract, weiAmount, gasLimitText] in
                 // Phase 1 - decrypt
 // the decrypted private/public key
                 // bytes flow through the binary channel; we
@@ -1592,13 +1591,13 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                             signedTx = try JsBridge.shared.signTokenTransaction(
                                 privKey: keys.privateKey, pubKey: keys.publicKey,
                                 contractAddress: contract, toAddress: to,
-                                amountWei: weiAmount, gasLimit: Self.gasLimitToken,
+                                amountWei: weiAmount, gasLimit: gasLimitText,
                                 rpcEndpoint: rpc, chainId: chainId,
                                 advancedSigningEnabled: advancedSigning, nonce: nonce)
                         } else {
                             signedTx = try JsBridge.shared.signCoinTransaction(
                                 privKey: keys.privateKey, pubKey: keys.publicKey,
-                                toAddress: to, valueWei: weiAmount, gasLimit: Self.gasLimitNative,
+                                toAddress: to, valueWei: weiAmount, gasLimit: gasLimitText,
                                 rpcEndpoint: rpc, chainId: chainId,
                                 advancedSigningEnabled: advancedSigning, nonce: nonce)
                         }
@@ -1645,7 +1644,7 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
                     await MainActor.run {
                         wait?.dismiss(animated: true) {
                             dlg?.dismiss(animated: true) {
-                                self?.presentSentDialog(txHash: txHash)
+                                self?.presentSentDialog(txHash: txHash, fromAddress: capturedFromAddress)
                             }
                         }
                     }
@@ -1729,8 +1728,8 @@ public final class SendViewController: UIViewController, HomeScreenViewTypeProvi
         return "\(error)"
     }
 
-    private func presentSentDialog(txHash: String) {
-        let dlg = TransactionSentDialogViewController(txHash: txHash)
+    private func presentSentDialog(txHash: String, fromAddress: String) {
+        let dlg = TransactionSentDialogViewController(txHash: txHash, fromAddress: fromAddress)
         dlg.onClose = { [weak self] in
             (self?.parent as? HomeViewController)?
                 .showMain(refreshBalanceAfterNavigation: true)

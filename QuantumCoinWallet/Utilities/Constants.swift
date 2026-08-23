@@ -13,6 +13,8 @@ public enum Constants {
 
     public static let BLOCK_EXPLORER_TX_HASH_URL = "/txn/{txhash}"
     public static let BLOCK_EXPLORER_ACCOUNT_TRANSACTION_URL = "/account/{address}/txn/page"
+    /// Token contract page (review dialog / pool & position symbol links).
+    public static let BLOCK_EXPLORER_TOKEN_URL = "/token/{address}"
 
     // MARK: - External links
 
