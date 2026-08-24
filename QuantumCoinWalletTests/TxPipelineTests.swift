@@ -46,6 +46,9 @@ final class ReviewSpecTests: XCTestCase {
     }
 }
 
+// `TxStatusPoller` is @MainActor-isolated, so its pure static
+// helpers must be exercised from the main actor.
+@MainActor
 final class TxStatusPollerTests: XCTestCase {
 
     private func tx(_ hash: String, status: String?) throws -> AccountTransaction {

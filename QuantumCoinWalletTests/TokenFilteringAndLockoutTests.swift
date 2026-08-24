@@ -301,13 +301,17 @@ final class TokenFilteringAndLockoutTests: XCTestCase {
 
         // Token send: contract present -> row MUST render once.
         let tokenDialog = TransactionReviewDialogViewController(
-            asset: "Heisen (HSN)",
-            assetContract: RecognizedTokens.heisen,
-            fromAddress: "0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom",
-            toAddress: "0xtotototototototototototototototototototototototototototototototo",
-            amount: "0.1 HSN",
-            networkName: "TestNet",
-            chainId: 9999)
+            spec: ReviewSpec()
+                .action("Send Heisen (HSN)")
+                .contractAddress(RecognizedTokens.heisen)
+                .contractIsToken(true)
+                .fromAddress("0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom")
+                .toAddress("0xtotototototototototototototototototototototototototototototototo")
+                .quantityValue("0")
+                .tokenQuantityValue("0.1 HSN")
+                .gas(21_000, "0.1 Q")
+                .networkText("TestNet (chain 9999)"),
+            walletAddress: "0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom")
         tokenDialog.loadViewIfNeeded()
         XCTAssertEqual(
             countLabels(in: tokenDialog.view, withText: header), 1,
@@ -319,13 +323,17 @@ final class TokenFilteringAndLockoutTests: XCTestCase {
 
         // Native coin send: no contract -> row MUST be absent.
         let nativeDialog = TransactionReviewDialogViewController(
-            asset: "QC",
-            assetContract: nil,
-            fromAddress: "0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom",
-            toAddress: "0xtotototototototototototototototototototototototototototototototo",
-            amount: "0.1 QC",
-            networkName: "TestNet",
-            chainId: 9999)
+            spec: ReviewSpec()
+                .action("Send QC")
+                .contractAddress(nil)
+                .contractIsToken(false)
+                .fromAddress("0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom")
+                .toAddress("0xtotototototototototototototototototototototototototototototototo")
+                .quantityValue("0.1 QC")
+                .tokenQuantityValue(nil)
+                .gas(21_000, "0.1 Q")
+                .networkText("TestNet (chain 9999)"),
+            walletAddress: "0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom")
         nativeDialog.loadViewIfNeeded()
         XCTAssertEqual(
             countLabels(in: nativeDialog.view, withText: header), 0,
@@ -336,13 +344,17 @@ final class TokenFilteringAndLockoutTests: XCTestCase {
 
         // Empty contract string: also MUST be suppressed.
         let emptyContractDialog = TransactionReviewDialogViewController(
-            asset: "Heisen (HSN)",
-            assetContract: "",
-            fromAddress: "0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom",
-            toAddress: "0xtotototototototototototototototototototototototototototototototo",
-            amount: "0.1 HSN",
-            networkName: "TestNet",
-            chainId: 9999)
+            spec: ReviewSpec()
+                .action("Send Heisen (HSN)")
+                .contractAddress("")
+                .contractIsToken(true)
+                .fromAddress("0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom")
+                .toAddress("0xtotototototototototototototototototototototototototototototototo")
+                .quantityValue("0")
+                .tokenQuantityValue("0.1 HSN")
+                .gas(21_000, "0.1 Q")
+                .networkText("TestNet (chain 9999)"),
+            walletAddress: "0xfromfromfromfromfromfromfromfromfromfromfromfromfromfromfromfrom")
         emptyContractDialog.loadViewIfNeeded()
         XCTAssertEqual(
             countLabels(in: emptyContractDialog.view, withText: header), 0,
